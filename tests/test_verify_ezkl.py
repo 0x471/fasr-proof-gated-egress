@@ -1,0 +1,66 @@
+import json
+
+import pytest
+
+from conftest import MULTI_X, TINY_X
+from pge.binding import BindingError, build_instances, split_instances
+from pge.bundle import Bundle, Pins
+from pge.verdict import Verdict, verify
+
+
+def _verify(ezkl, bundle, proof, tmp_path):
+    p = tmp_path / "candidate.json"
+    p.write_text(json.dumps(proof))
+    return verify(ezkl, p, bundle.settings, bundle.vk, bundle.srs)[0]
+
+
+def test_tiny_accepts_matching_request(ezkl, tiny_bundle, tiny_proof, tmp_path):
+    _, outs = split_instances(tiny_bundle.spec, tiny_proof["instances"])
+    cand = dict(tiny_proof, instances=build_instances(tiny_bundle.spec, [TINY_X], outs))
+    assert _verify(ezkl, tiny_bundle, cand, tmp_path) == Verdict.ACCEPT
+
+
+def test_tiny_rejects_other_encoded_request(ezkl, tiny_bundle, tiny_proof, tmp_path):
+    _, outs = split_instances(tiny_bundle.spec, tiny_proof["instances"])
+    cand = dict(tiny_proof, instances=build_instances(tiny_bundle.spec, [[0.6, -0.2, 0.9, 0.1]], outs))
+    assert _verify(ezkl, tiny_bundle, cand, tmp_path) == Verdict.REJECT
+
+
+def test_tiny_accepts_same_encoding_class(ezkl, tiny_bundle, tiny_proof, tmp_path):
+    # 0.50001 quantizes like 0.5, so the proof also covers it; binding is to the encoded request.
+    _, outs = split_instances(tiny_bundle.spec, tiny_proof["instances"])
+    cand = dict(tiny_proof, instances=build_instances(tiny_bundle.spec, [[0.50001, -0.2, 0.9, 0.1]], outs))
+    assert _verify(ezkl, tiny_bundle, cand, tmp_path) == Verdict.ACCEPT
+
+
+def test_tiny_rejects_swapped_outputs(ezkl, tiny_bundle, tiny_proof, tmp_path):
+    _, outs = split_instances(tiny_bundle.spec, tiny_proof["instances"])
+    forged = [[outs[0][1], outs[0][0], outs[0][2]]]
+    cand = dict(tiny_proof, instances=build_instances(tiny_bundle.spec, [TINY_X], forged))
+    assert _verify(ezkl, tiny_bundle, cand, tmp_path) == Verdict.REJECT
+
+
+def test_multi_accepts_and_rejects(ezkl, multi_bundle, multi_proof, tmp_path):
+    spec = multi_bundle.spec
+    _, outs = split_instances(spec, multi_proof["instances"])
+    good = dict(multi_proof, instances=build_instances(spec, MULTI_X, outs))
+    assert _verify(ezkl, multi_bundle, good, tmp_path) == Verdict.ACCEPT
+    swapped = dict(multi_proof, instances=build_instances(spec, MULTI_X[::-1], outs))
+    assert _verify(ezkl, multi_bundle, swapped, tmp_path) == Verdict.REJECT
+
+
+def test_pretty_fields_not_authenticated(ezkl, tiny_bundle, tiny_proof, tmp_path):
+    # These can change and the proof still verifies, so the device must never read or release them.
+    cand = json.loads(json.dumps(tiny_proof))
+    cand["pretty_public_inputs"]["rescaled_outputs"] = [["999"]]
+    cand["timestamp"] = 0
+    assert _verify(ezkl, tiny_bundle, cand, tmp_path) == Verdict.ACCEPT
+
+
+def test_bundle_pins_enforced(srs_path):
+    from conftest import TINY, TINY_PINS
+    for bad in (Pins("00" * 32, TINY_PINS.vk, TINY_PINS.srs),
+                Pins(TINY_PINS.settings, "00" * 32, TINY_PINS.srs),
+                Pins(TINY_PINS.settings, TINY_PINS.vk, "00" * 32)):
+        with pytest.raises(BindingError):
+            Bundle.load(TINY / "settings.json", TINY / "vk.key", srs_path, bad)
