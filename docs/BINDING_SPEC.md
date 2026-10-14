@@ -82,10 +82,11 @@ Every request in `[-1, 1]^4` is inside. `from_float` only accepts finite F32 par
 
 `pge/verdict.py` maps a verify call to ACCEPT, REJECT (invalid or malformed proof) or ERROR (the check did not happen properly). Only ACCEPT releases output. Tests treat ERROR as a failure, never as a rejection.
 
-- The proof is read once, up to 1 MiB, into a private copy that EZKL then verifies. A read failure is ERROR; a larger proof is REJECT.
-- REJECT needs one of two anchored error shapes: `[halo2] ...`, or a proof parse error `[pfsys] failed to load the proof: ... at line L column C`. Everything else is ERROR, including I/O errors while loading the proof, settings, vk or SRS. The device script also requires the CLI's `verified: false` line for a `[halo2]` rejection, and `verified: true` plus exit code 0 for ACCEPT.
+- The proof is read once, up to 1 MiB. A read failure is ERROR; a larger proof is REJECT.
+- The device checks the proof's shape in memory: a JSON object whose `proof` is a list of integers in [0, 255] and whose `instances` are lists of canonical field elements. Anything else is REJECT without calling EZKL. It then writes a private copy holding only those two fields and verifies that, so the other fields are never read.
+- After that, only a `[halo2] ...` error is REJECT. Everything else is ERROR, including any error while loading the proof, settings, vk or SRS. EZKL's load messages can't tell bad data from failed I/O: serde can attach `at line L column C` to a real I/O error. The device script also requires the CLI's `verified: false` line for a `[halo2]` rejection, and `verified: true` plus exit code 0 for ACCEPT.
 - A `[halo2]` failure only says the proof is bad if settings, vk and SRS were the pinned ones, so use `Bundle.verify`, which re-checks them.
-- `verify` itself has no deadline and cannot survive a native crash. `pge/worker.py` runs it in a child process that is killed (SIGKILL) at the deadline; a timeout, crash, non-zero exit or unreadable answer is ERROR. The child's output is not size-bounded. The device script uses `timeout -k 5`, so a verifier that ignores SIGTERM is killed 5 s later.
+- `verify` itself has no deadline (it can block on opening a slow file) and cannot survive a native crash. `pge/worker.py` runs it in a child process that is killed (SIGKILL) at the deadline; a timeout, crash, non-zero exit, or anything but one `[verdict, detail]` line of two strings is ERROR. Limits: the bundle check runs before the deadline starts, only the direct child is killed, and its output size is not bounded. The device script uses `timeout -k 5`, so a verifier that ignores SIGTERM is killed 5 s later.
 
 ## 7. Test vectors
 
