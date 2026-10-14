@@ -30,12 +30,19 @@ while [ $# -gt 0 ]; do [ "$1" = --proof-path ] && proof="$2"; shift; done
 good=0; cmp -s "$proof" good_canonical.json && good=1
 case "$STUB" in accept_all) good=1;; reject_all) good=0;; esac
 if [ $good = 1 ]; then
+  case "$STUB" in
+    rc1_verified) echo "[*] {TS}, ezkl::execute] - verified: true"; exit 1;;
+    rc0_silent) echo "[*] {TS}, ezkl] - succeeded"; exit 0;;
+    extra_sample) [ -f timings_ms.txt ] && echo 1 >> timings_ms.txt;;
+  esac
   echo "[*] {TS}, ezkl::execute] - verified: true"; echo "[*] {TS}, ezkl] - succeeded"; exit 0
 fi
 case "$STUB" in
   ignore_term) [ "$proof" = tampered_output.json ] && {{ trap '' TERM; sleep 60; }};;
   segv) kill -SEGV $$;;
   perm) echo "[E] {TS}, ezkl] - [pfsys] failed to load the proof: Permission denied (os error 13)"; exit 1;;
+  eio) echo "[E] {TS}, ezkl] - [pfsys] failed to load the proof: Input/output error (os error 5) at line 1 column 14"
+    exit 1;;
   srs_path) echo "[E] {TS}, ezkl] - [srs] failed to load srs from /x/[halo2].srs"; exit 1;;
   halo2_unverified) echo "[E] {TS}, ezkl] - [halo2] The constraint system is not satisfied"; exit 1;;
   two_errors) echo "[*] {TS}, ezkl::execute] - verified: false"
@@ -93,15 +100,15 @@ def test_correct_cli_passes(device):
     assert len((device.run / "timings_ms.txt").read_text().split()) == 2
 
 
-@pytest.mark.parametrize("stub", ["accept_all", "reject_all", "segv", "perm", "srs_path", "halo2_unverified",
-                                  "two_errors", "mutate"])
+@pytest.mark.parametrize("stub", ["accept_all", "reject_all", "segv", "perm", "eio", "srs_path", "halo2_unverified",
+                                  "two_errors", "mutate", "rc1_verified", "rc0_silent", "extra_sample"])
 def test_wrong_behaviour_fails(device, stub):
     rc, out, _ = device(stub)
     assert rc == 1 and "all checks passed" not in out, out
 
 
 def test_misleading_diagnostics_are_errors(device):
-    for stub in ("perm", "srs_path", "halo2_unverified"):
+    for stub in ("perm", "eio", "srs_path", "halo2_unverified"):
         rc, out, _ = device(stub)
         assert "FAIL  tampered output: got ERROR(rc=1), want REJECT" in out, out
 
@@ -126,3 +133,19 @@ def test_wrong_version_fails(device):
 def test_wrong_archive_digest_fails_before_extracting(device):
     rc, out, _ = device(sha="00" * 32)
     assert rc == 1 and not (device.run / "ezkl").exists(), out
+
+
+def test_success_needs_exit_zero_and_the_verified_line(device):
+    for stub in ("rc1_verified", "rc0_silent"):
+        rc, out, _ = device(stub)
+        assert rc == 1 and "FAIL  valid proof: got ERROR" in out, out
+
+
+def test_sample_count_is_checked(device):
+    rc, out, _ = device("extra_sample")
+    assert rc == 1 and "samples, expected 2" in out, out
+
+
+def test_garbage_never_reaches_the_cli(device):
+    rc, out, _ = device("accept_all")
+    assert "PASS  garbage file: REJECT" in out, out
