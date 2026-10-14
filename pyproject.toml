@@ -1,0 +1,13 @@
+[project]
+name = "proof-gated-egress"
+version = "0.0.1"
+description = "A hardened device that lets AI outputs leave a datacenter only with a valid zero-knowledge proof."
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+ezkl = ["ezkl==23.0.5", "onnx", "numpy"]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
