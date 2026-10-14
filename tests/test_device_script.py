@@ -49,6 +49,8 @@ case "$STUB" in
     echo "[E] {TS}, ezkl] - [halo2] The constraint system is not satisfied"
     echo "[E] {TS}, ezkl] - [srs] something"; exit 1;;
   mutate) echo x >> vk.key;;
+  swap) if [ ! -f swapped ]; then touch swapped; cp vk.key vk.bak; echo x >> vk.key
+        elif [ -f vk.bak ]; then mv vk.bak vk.key; fi;;
 esac
 echo "[*] {TS}, ezkl::execute] - verified: false"
 echo "[E] {TS}, ezkl] - [halo2] The constraint system is not satisfied"
@@ -101,7 +103,7 @@ def test_correct_cli_passes(device):
 
 
 @pytest.mark.parametrize("stub", ["accept_all", "reject_all", "segv", "perm", "eio", "srs_path", "halo2_unverified",
-                                  "two_errors", "mutate", "rc1_verified", "rc0_silent", "extra_sample"])
+                                  "two_errors", "mutate", "swap", "rc1_verified", "rc0_silent", "extra_sample"])
 def test_wrong_behaviour_fails(device, stub):
     rc, out, _ = device(stub)
     assert rc == 1 and "all checks passed" not in out, out
@@ -149,3 +151,14 @@ def test_sample_count_is_checked(device):
 def test_garbage_never_reaches_the_cli(device):
     rc, out, _ = device("accept_all")
     assert "PASS  garbage file: REJECT" in out, out
+
+
+def test_failed_shape_check_is_error(device):
+    (device.run / "pge" / "verdict.py").unlink()
+    rc, out, _ = device()
+    assert rc == 1 and "FAIL  tampered output: got ERROR(prepare=1), want REJECT" in out, out
+
+
+def test_pins_are_rechecked_before_each_case(device):
+    rc, out, _ = device("swap")
+    assert rc == 1 and "pinned inputs changed" in out and "tampered input" not in out, out
