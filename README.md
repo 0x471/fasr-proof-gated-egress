@@ -66,11 +66,13 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `pge/bundle.py` | Load a bundle only if settings, vk and SRS match their pins |
 | `pge/domain.py` | Input domain of an affine + ReLU circuit, so impossible requests are refused up front |
 | `pge/verdict.py` | Turn a verify call into ACCEPT, REJECT or ERROR |
+| `pge/worker.py` | Run one verify in a child process with a deadline |
 | `docs/BINDING_SPEC.md` | The binding rules, pitfalls and test vectors |
 | `tests/` | Unit tests, differential tests against EZKL's own encoding and witness generation, end-to-end verification |
 | `tests/fixtures/` | Two pinned bundles: `tiny` (y = ReLU(xW + b), 4 to 3) and `multi` (two inputs, two outputs, scales 13 and 26) |
 | `prover/` | Build and prove the test circuits with EZKL; tamper checks |
-| `device/verify_on_pi.sh` | Verify the pinned proof on a Raspberry Pi with EZKL's aarch64 CLI and time it |
+| `device/verify_on_pi.sh` | Stage the pinned tiny bundle and run the device checks on the Pi over SSH, or locally on Linux with `HOST=local` |
+| `device/check_verifier.sh` | The device checks: fetch the pinned EZKL CLI, check accept and reject cases, time verification |
 
 ## Running the tests
 
@@ -82,6 +84,8 @@ uv pip install --python .venv/bin/python "ezkl==23.0.5" onnx numpy pytest
 
 The verification tests need the pinned SRS. They use `prover/artifacts/kzg.srs` or `$PGE_SRS` if present and otherwise download it with EZKL's `get_srs`, then check the pin. CI sets `PGE_REQUIRE_INTEGRATION=1`, so a missing SRS or EZKL fails the run instead of skipping those tests.
 
+`tests/test_device_script.py` runs the device checks against a stub CLI and only runs on Linux. CI also runs `device/verify_on_pi.sh` with `HOST=local` and EZKL's x86_64 Linux CLI.
+
 ## Measured so far
 
 | What | Where | Result |
@@ -92,7 +96,7 @@ The verification tests need the pinned SRS. They use `prover/artifacts/kzg.srs` 
 | Tampered input, output and proof bytes | laptop | rejected |
 | Tampered input, output, garbage file | Raspberry Pi | rejected (non-zero exit) |
 
-The current Pi script has been exercised against stub verifiers, not yet re-run on the Pi.
+The current device checks pass with the real aarch64 CLI in a Debian 13 container and with the x86_64 CLI in CI, and fail as expected against a stub CLI. They have not been re-run on the Pi yet.
 
 ## Scope
 
