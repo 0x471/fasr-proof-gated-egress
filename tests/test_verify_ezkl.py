@@ -54,6 +54,7 @@ def test_pretty_fields_not_authenticated(ezkl, tiny_bundle, tiny_proof, tmp_path
     cand = json.loads(json.dumps(tiny_proof))
     cand["pretty_public_inputs"]["rescaled_outputs"] = [["999"]]
     cand["timestamp"] = 0
+    cand["hex_proof"] = cand["hex_proof"][:-2] + ("00" if cand["hex_proof"][-2:] != "00" else "01")
     assert _verify(ezkl, tiny_bundle, cand, tmp_path) == Verdict.ACCEPT
 
 
