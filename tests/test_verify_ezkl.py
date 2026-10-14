@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from conftest import MULTI_X, TINY_X
-from pge.binding import BindingError, build_instances, split_instances
+from conftest import MULTI_X, TINY, TINY_X
+from pge.binding import BindingError, CircuitSpec, build_instances, decode_outputs, split_instances
 from pge.bundle import Bundle, Pins
-from pge.verdict import Verdict
+from pge.verdict import Verdict, verify
 
 
 def _verify(ezkl, bundle, proof, tmp_path):
@@ -64,3 +64,14 @@ def test_bundle_pins_enforced(srs_path):
                 Pins(TINY_PINS.settings, TINY_PINS.vk, "00" * 32)):
         with pytest.raises(BindingError):
             Bundle.load(TINY / "settings.json", TINY / "vk.key", srs_path, bad)
+
+
+def test_scale_only_settings_change_still_verifies(ezkl, tiny_bundle, tmp_path):
+    # Why settings are pinned: the same proof verifies under these settings, but decodes differently.
+    s = json.loads(tiny_bundle.settings.read_text())
+    s["model_output_scales"] = [13]
+    forged = tmp_path / "settings.json"
+    forged.write_text(json.dumps(s))
+    assert verify(ezkl, TINY / "proof.json", forged, tiny_bundle.vk, tiny_bundle.srs)[0] == Verdict.ACCEPT
+    _, outs = split_instances(tiny_bundle.spec, json.loads((TINY / "proof.json").read_text())["instances"])
+    assert decode_outputs(CircuitSpec.parse(s, "forged"), outs) != decode_outputs(tiny_bundle.spec, outs)
