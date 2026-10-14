@@ -24,7 +24,7 @@ def test_sigterm_is_not_enough_to_survive(tiny_bundle):
 
 
 @pytest.mark.parametrize("code", [
-    "import os; os.abort()",
+    "import os, signal; os.kill(os.getpid(), signal.SIGKILL)",
     "import sys; print('[\"accept\", \"\"]'); sys.exit(3)",
     "print('accept')",
     "print('[\"maybe\", \"\"]')",
