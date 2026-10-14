@@ -44,7 +44,7 @@ def test_missing_file_is_error(files):
 
 def test_messages():
     assert classify_exception("Failed to run verify: [halo2] Multi-opening proof was invalid") == Verdict.REJECT
-    assert classify_exception("Failed to run verify: [pfsys] failed to load the proof: expected value") == Verdict.REJECT
+    assert classify_exception("Failed to run verify: [pfsys] failed to load the proof: expected value at line 1 column 1") == Verdict.REJECT
     assert classify_exception("something else broke") == Verdict.ERROR
 
 
