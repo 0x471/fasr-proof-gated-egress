@@ -1,0 +1,101 @@
+# Proof-gated egress
+
+A hardened, off-the-shelf device that lets AI outputs leave a datacenter only if they carry a valid zero-knowledge proof. Threat model, measurements and guidance for frontier AI labs.
+
+Built during ERA's Frontier AI Security Residency (FASR), October to December 2026.
+
+> Early work in progress. Nothing here is production security. Claims are limited to what the tests and measurements show.
+
+## Idea
+
+A compromised AI server could leak model weights inside ordinary answers. If every answer must carry a proof that it came from the approved model on that exact request, a small device at the boundary can check the proof and block everything else. The problem shrinks from securing a datacenter to securing one device.
+
+A valid proof removes the server's choice over what an answer says. It does not cover when, whether or how the answer is delivered. Those channels are part of what this project measures.
+
+```mermaid
+flowchart LR
+    U[User] -->|request x| D
+    subgraph D[Device]
+        A[encode x itself] --> V[verify proof against own x and server y]
+        V -->|ACCEPT| R[release y decoded from verified values]
+        V -->|REJECT or ERROR| E[generic error]
+    end
+    D -->|x| S[AI server / prover]
+    S -->|y, proof| D
+    R --> U
+    E --> U
+```
+
+The device only listens on the outside. It connects to the server itself, although that connection still carries hostile data. The fixed release time in the plan is target behaviour; there is no service or scheduler yet.
+
+## Request path
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant D as Device
+    participant S as Server
+    U->>D: x
+    D->>D: check x is inside the circuit domain
+    D->>S: x
+    S->>D: output field elements, proof
+    D->>D: rebuild instances from its own x, check canonical form
+    D->>D: verify with the pinned vk and SRS
+    alt ACCEPT
+        D->>U: y decoded from the verified instances
+    else REJECT or ERROR
+        D->>U: one generic error
+    end
+```
+
+## Versions
+
+| Version | What it is |
+|---|---|
+| v0 baseline | The verifier as a normal program on standard Raspberry Pi OS |
+| v1 stripped | A minimal Buildroot system that runs only the verifier; two wired ports; a strict binary message format; fuzzed |
+| v2 hardened | A fixed release schedule, signed and rollback-protected updates, and, if the hardware allows, secure boot and a TPM counter |
+
+Each version is measured the same way: reachable services, trusted code size, verification time, and leakage through timing and failures under tested attacks.
+
+## What's here
+
+| Path | Contents |
+|---|---|
+| `pge/binding.py` | Encode the request exactly as EZKL does, validate the server's outputs, decode verified outputs |
+| `pge/bundle.py` | Load a bundle only if settings, vk and SRS match their pins |
+| `pge/domain.py` | Input domain of an affine + ReLU circuit, so impossible requests are refused up front |
+| `pge/verdict.py` | Turn a verify call into ACCEPT, REJECT or ERROR |
+| `docs/BINDING_SPEC.md` | The binding rules, pitfalls and test vectors |
+| `tests/` | Unit tests, differential tests against EZKL's own encoding and witness generation, end-to-end verification |
+| `tests/fixtures/` | Two pinned bundles: `tiny` (y = ReLU(xW + b), 4 to 3) and `multi` (two inputs, two outputs, scales 13 and 26) |
+| `prover/` | Build and prove the test circuits with EZKL; tamper checks |
+| `device/verify_on_pi.sh` | Verify the pinned proof on a Raspberry Pi with EZKL's aarch64 CLI and time it |
+
+## Running the tests
+
+```
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python "ezkl==23.0.5" onnx numpy pytest
+.venv/bin/python -m pytest -q
+```
+
+The verification tests need the pinned SRS. They use `prover/artifacts/kzg.srs` or `$PGE_SRS` if present and otherwise download it with EZKL's `get_srs`, then check the pin. CI sets `PGE_REQUIRE_INTEGRATION=1`, so a missing SRS or EZKL fails the run instead of skipping those tests.
+
+## Measured so far
+
+| What | Where | Result |
+|---|---|---|
+| Prove / verify, tiny circuit, in-process | laptop (M4 Pro) | about 0.5 to 0.8 s / 8 to 14 ms |
+| Verify, whole CLI process, n = 20 | Raspberry Pi 4 (13 Oct, earlier script) | 99 to 103 ms |
+| Raw proof size | | 3072 bytes |
+| Tampered input, output and proof bytes | laptop | rejected |
+| Tampered input, output, garbage file | Raspberry Pi | rejected (non-zero exit) |
+
+The current Pi script has been exercised against stub verifiers, not yet re-run on the Pi.
+
+## Scope
+
+In scope: hardening and measuring the verifying device, request binding, output channels (timing, failures, sizes) and the update path.
+
+Out of scope: the soundness of the proof system, determined physical attacks on a Raspberry Pi, and what ordinary outputs reveal about a model.
