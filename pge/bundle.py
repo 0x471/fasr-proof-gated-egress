@@ -1,8 +1,9 @@
 """A pinned model bundle: settings, verification key and SRS, checked before use.
 
 load reads each file once, checks its sha256 and keeps a private read-only copy of
-exactly those bytes. verify re-checks the copies before every call, so a [halo2]
-failure always comes from the pinned verifier inputs and not from a changed file.
+exactly those bytes. verify re-checks the copies before every call, so a lasting change
+shows up as ERROR instead of a [halo2] failure. The same user can still swap a file
+between the re-check and EZKL's read.
 """
 from __future__ import annotations
 
