@@ -38,7 +38,7 @@ if [ $good = 1 ]; then
   echo "[*] {TS}, ezkl::execute] - verified: true"; echo "[*] {TS}, ezkl] - succeeded"; exit 0
 fi
 case "$STUB" in
-  ignore_term) [ "$proof" = tampered_output.json ] && {{ trap '' TERM; sleep 60; }};;
+  ignore_term) [ -f hung ] || {{ touch hung; trap '' TERM; sleep 60; }};;
   segv) kill -SEGV $$;;
   perm) echo "[E] {TS}, ezkl] - [pfsys] failed to load the proof: Permission denied (os error 13)"; exit 1;;
   eio) echo "[E] {TS}, ezkl] - [pfsys] failed to load the proof: Input/output error (os error 5) at line 1 column 14"
