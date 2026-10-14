@@ -1,10 +1,12 @@
 import json
+import os
+from pathlib import Path
 
 import pytest
 
 from conftest import TINY, TINY_X
 from pge.binding import build_instances, split_instances
-from pge.verdict import Verdict, classify_exception, verify
+from pge.verdict import MAX_PROOF_BYTES, Verdict, classify_exception, verify
 
 
 class FakeEzkl:
@@ -62,3 +64,73 @@ def test_real_verdicts(ezkl, tiny_bundle, tiny_proof, tmp_path):
     other = dict(tiny_proof, instances=build_instances(b.spec, [[0.6, -0.2, 0.9, 0.1]], outs))
     assert verify(ezkl, _write(tmp_path, other), b.settings, b.vk, b.srs)[0] == Verdict.REJECT
     assert verify(ezkl, _write(tmp_path, "bad\n"), b.settings, b.vk, b.srs)[0] == Verdict.REJECT
+
+
+@pytest.mark.parametrize("missing", [1, 2, 3])
+def test_each_missing_prerequisite_is_error(files, missing):
+    args = list(files)
+    args[missing] = args[0].parent / "nope"
+    assert verify(FakeEzkl(result=True), *args)[0] == Verdict.ERROR
+
+
+@pytest.mark.parametrize("msg", [
+    "Failed to run verify: [pfsys] failed to load the proof: Permission denied (os error 13)",
+    "Failed to run verify: [pfsys] failed to load the proof: No such file or directory (os error 2)",
+    "Failed to run verify: [srs] failed to load srs from /tmp/x/[halo2].srs",
+    "Failed to run verify: [srs] failed to read srs failed to fill whole buffer",
+    "Failed to run verify: [pfsys] failed to load vk from file: unexpected version byte",
+    "Failed to run verify: [io] expected value at line 1 column 1",
+    "Failed to run verify: [io] No such file or directory (os error 2)",
+    "something [halo2] The constraint system is not satisfied",
+    "",
+])
+def test_infrastructure_messages_are_error(msg):
+    assert classify_exception(msg) == Verdict.ERROR
+
+
+def test_verifies_a_private_copy(files):
+    seen = []
+
+    class Recorder:
+        def verify(self, proof, *a, **k):
+            seen.append((proof, open(proof).read()))
+            return True
+
+    assert verify(Recorder(), *files)[0] == Verdict.ACCEPT
+    assert seen[0][0] != str(files[0]) and seen[0][1] == "{}"
+
+
+def test_oversized_proof_is_rejected_unread(files, tmp_path):
+    big = tmp_path / "big.json"
+    big.write_bytes(b" " * (MAX_PROOF_BYTES + 1))
+    assert verify(FakeEzkl(result=True), big, *files[1:])[0] == Verdict.REJECT
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+def test_unreadable_files_are_error(ezkl, tiny_bundle, tiny_proof, tmp_path):
+    b = tiny_bundle
+    p = _write(tmp_path, "bad\n")
+    p.chmod(0)
+    # an unreadable SRS whose name looks like a halo2 error
+    srs = tmp_path / "[halo2].srs"
+    srs.write_bytes(Path(b.srs).read_bytes())
+    srs.chmod(0)
+    proof = tmp_path / "good.json"
+    proof.write_text(json.dumps(tiny_proof))
+    try:
+        assert verify(ezkl, p, b.settings, b.vk, b.srs)[0] == Verdict.ERROR
+        assert verify(ezkl, proof, b.settings, b.vk, srs) == (
+            Verdict.ERROR, f"Failed to run verify: [srs] failed to load srs from {srs}"[:200])
+    finally:
+        p.chmod(0o600)
+        srs.chmod(0o600)
+
+
+def test_real_infrastructure_errors(ezkl, tiny_bundle, tiny_proof, tmp_path):
+    b = tiny_bundle
+    proof = _write(tmp_path, json.dumps(tiny_proof))
+    bad = tmp_path / "bad"
+    bad.write_bytes(b"bad")
+    assert verify(ezkl, proof, bad, b.vk, b.srs)[0] == Verdict.ERROR
+    assert verify(ezkl, proof, b.settings, bad, b.srs)[0] == Verdict.ERROR
+    assert verify(ezkl, proof, b.settings, b.vk, bad)[0] == Verdict.ERROR
