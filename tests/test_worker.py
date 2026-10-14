@@ -1,3 +1,4 @@
+import json
 import sys
 import time
 
@@ -43,3 +44,36 @@ def test_changed_bundle_is_error_before_starting(tiny_bundle):
     tiny_bundle.vk.write_bytes(b"changed")
     v, detail = verify_in_worker(tiny_bundle, TINY / "proof.json", 30, cmd=[sys.executable, "-c", "1/0"])
     assert v == Verdict.ERROR and detail.startswith("bundle check failed")
+
+
+def test_hostile_import_path_is_ignored(ezkl, tiny_bundle, tiny_proof, tmp_path, monkeypatch):
+    hostile = tmp_path / "hostile"
+    hostile.mkdir()
+    (hostile / "ezkl.py").write_text("__version__ = '23.0.5'\ndef verify(*a, **k):\n    return True\n")
+    monkeypatch.setenv("PYTHONPATH", str(hostile))
+    bad = json.loads(json.dumps(tiny_proof))
+    bad["instances"][0][-3] = bad["instances"][0][1]
+    p = tmp_path / "tampered.json"
+    p.write_text(json.dumps(bad))
+    assert verify_in_worker(tiny_bundle, p, 60)[0] == Verdict.REJECT
+
+
+@pytest.mark.parametrize("out", [
+    '{"accept": "not a tuple", "detail": 42}',
+    '["accept", {"unexpected": 42}]',
+    '["accept", 1]',
+    '["accept"]',
+    '["accept", "", ""]',
+    '["reject", ""]\n["accept", ""]',
+    '["accept", ""]\n["accept", ""]',
+    '',
+])
+def test_answer_must_be_one_two_string_line(tiny_bundle, out):
+    code = f"import sys; sys.stdout.write({out!r} + chr(10))" if out else "pass"
+    assert verify_in_worker(tiny_bundle, TINY / "proof.json", 30, cmd=[sys.executable, "-c", code])[0] == Verdict.ERROR
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf"), True, "5", None])
+def test_bad_timeout_is_error(tiny_bundle, timeout):
+    v, detail = verify_in_worker(tiny_bundle, TINY / "proof.json", timeout, cmd=[sys.executable, "-c", "1/0"])
+    assert v == Verdict.ERROR and detail.startswith("bad timeout")
