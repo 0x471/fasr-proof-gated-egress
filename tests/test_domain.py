@@ -6,7 +6,7 @@ import pytest
 from onnx import numpy_helper
 
 from conftest import TINY, TINY_PINS, TINY_X, run
-from pge.binding import BindingError, CircuitSpec
+from pge.binding import BindingError, CircuitSpec, felt_to_hex, int_to_felt, quantize, quantize_inputs
 from pge.domain import AffineReluDomain
 
 N = 16384 ** 2 - 1
@@ -30,7 +30,6 @@ def test_constants(dom):
     assert dom.bound == N
     assert dom.wq == ((2244, -3772, -7521), (-7921, 5133, 6763), (1747, 3760, 715), (7128, 5175, -8147))
     assert dom.bq == (23984994, -31300542, 15411916)
-    # the fixture proof's output is exactly the first pre-activation
     assert dom.preactivations([4096, -1638, 7373, 819])[0] == 64869479
 
 
@@ -46,19 +45,36 @@ def test_unit_box_is_inside(dom):
         assert dom.admits([rng.randint(-8192, 8192) for _ in range(4)])
 
 
-def _crossing(dom, j, rest):
-    """Find n0 with z_j(n0) inside the bound and z_j(n0 + step) just outside."""
-    w = dom.wq[0][j]
-    step = 1 if w > 0 else -1
-    base = sum(rest[i - 1] * dom.wq[i][j] for i in range(1, 4)) + dom.bq[j]
-    n0 = (N - base) // abs(w) * step
-    while abs(base + (n0 + step) * w) <= N:
-        n0 += step
-    return [n0] + rest, [n0 + step] + rest
+# (j, z_j, n): pre-activation j sits exactly on or just past the bound, every other
+# constraint holds with room to spare. |n_i| < 2**24, so n / 8192 is an exact F32 request.
+FACETS = [
+    (0, N, [-28275, -28877, 18700, 6523]),
+    (0, N + 1, [-21030, -30814, 17952, 2273]),
+    (0, -N, [47718, 47162, -17629, 683]),
+    (0, -N - 1, [39294, 47039, -17897, 3264]),
+    (1, N, [-2775, 25794, 10812, 22457]),
+    (1, N + 1, [-5987, 26813, 5783, 22759]),
+    (1, -N, [6178, -14364, -10556, -19403]),
+    (1, -N - 1, [8165, -14303, -8456, -19541]),
+    (2, N, [-34242, -16780, 13557, -12186]),
+    (2, N + 1, [-34411, -15726, 15654, -10971]),
+    (2, -N, [44062, 30299, -15590, 17948]),
+    (2, -N - 1, [40848, 27282, -16508, 18330]),
+]
+
+# Input coordinate 2 on and just past its bound, pre-activations small. N is not an
+# F32 request at scale 13, so these go to EZKL as field elements.
+INPUT_FACETS = [
+    ([142579886, 9307149, 268435455, -100337831], True),
+    ([142579887, 9307149, 268435456, -100337832], False),
+    ([-142569193, -9292891, -268435455, 100343580], True),
+    ([-142569194, -9292891, -268435456, 100343580], False),
+]
 
 
-def _witness_ok(ezkl, d, n):
-    (d / "input.json").write_text(json.dumps({"input_data": [[v / 8192 for v in n]]}))
+def _witness_ok(ezkl, d, n, as_felts=False):
+    vals = [felt_to_hex(int_to_felt(v)) for v in n] if as_felts else [v / 8192 for v in n]
+    (d / "input.json").write_text(json.dumps({"input_data": [vals]}))
     try:
         run(ezkl.gen_witness, str(d / "input.json"), str(d / "network.ezkl"), str(d / "witness.json"))
         return True
@@ -69,12 +85,30 @@ def _witness_ok(ezkl, d, n):
 def test_policy_matches_witness_generation(ezkl, workdir, dom):
     d = workdir / "tiny"
     rng = random.Random(2)
-    cases = [[rng.randint(-20000, 20000) for _ in range(4)] for _ in range(80)]
-    for j in range(3):
-        inside, outside = _crossing(dom, j, [0, 0, 0])
-        cases += [inside, outside]
-    for n in cases:
+    for n in [[rng.randint(-20000, 20000) for _ in range(4)] for _ in range(80)]:
         assert dom.admits(n) == _witness_ok(ezkl, d, n), n
+
+
+@pytest.mark.parametrize("j,zj,n", FACETS)
+def test_preactivation_facets(ezkl, workdir, dom, spec, j, zj, n):
+    z = dom.preactivations(n)
+    assert z[j] == zj
+    assert all(abs(z[k]) <= N // 2 for k in range(3) if k != j) and all(abs(v) <= N // 2 for v in n)
+    inside = abs(zj) == N
+    assert dom.admits(n) == inside
+    assert _witness_ok(ezkl, workdir / "tiny", n) == inside
+    assert quantize_inputs(spec, [[v / 8192 for v in n]]) == [n]
+
+
+@pytest.mark.parametrize("n,inside", INPUT_FACETS)
+def test_input_facets(ezkl, workdir, dom, n, inside):
+    assert all(abs(z) <= N // 2 for z in dom.preactivations(n))
+    assert dom.admits(n) == inside
+    assert _witness_ok(ezkl, workdir / "tiny", n, as_felts=True) == inside
+
+
+def test_bound_is_not_an_f32_request():
+    assert quantize(N / 8192, 13) == N + 1
 
 
 def test_input_bound_on_its_own():
