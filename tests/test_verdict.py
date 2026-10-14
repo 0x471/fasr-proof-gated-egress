@@ -136,3 +136,85 @@ def test_real_infrastructure_errors(ezkl, tiny_bundle, tiny_proof, tmp_path):
     assert verify(ezkl, proof, bad, b.vk, b.srs)[0] == Verdict.ERROR
     assert verify(ezkl, proof, b.settings, bad, b.srs)[0] == Verdict.ERROR
     assert verify(ezkl, proof, b.settings, b.vk, bad)[0] == Verdict.ERROR
+
+
+class MustNotRun:
+    def verify(self, *a, **k):
+        raise AssertionError("EZKL must not see a malformed proof")
+
+
+def _with(fields):
+    good = json.loads((TINY / "proof.json").read_text())
+    return json.dumps({**good, **fields})
+
+
+@pytest.mark.parametrize("content", [
+    b"bad\n", b"", b"\xff\xfe", b"[]", b"null", b"[" * 100000, b"{}",
+    _with({"proof": None}).encode(),
+    _with({"proof": [256]}).encode(),
+    _with({"proof": [-1]}).encode(),
+    _with({"proof": [True]}).encode(),
+    _with({"proof": [1.0]}).encode(),
+    _with({"proof": "0x00"}).encode(),
+    _with({"instances": None}).encode(),
+    _with({"instances": ["00" * 32]}).encode(),
+    _with({"instances": [["ff" * 32]]}).encode(),
+    _with({"instances": [["00" * 31]]}).encode(),
+    _with({"instances": [["0X" + "0" * 62]]}).encode(),
+    _with({"instances": [[0]]}).encode(),
+])
+def test_malformed_proof_rejected_before_ezkl(files, content):
+    files[0].write_bytes(content)
+    verdict, detail = verify(MustNotRun(), *files)
+    assert verdict == Verdict.REJECT, detail
+
+
+def test_extra_fields_are_dropped(files):
+    files[0].write_text(_with({"pretty_public_inputs": "x", "hex_proof": 5, "extra": [1]}))
+    seen = []
+
+    class Recorder:
+        def verify(self, proof, *a, **k):
+            seen.append(json.loads(open(proof).read()))
+            return True
+
+    assert verify(Recorder(), *files)[0] == Verdict.ACCEPT
+    assert set(seen[0]) == {"instances", "proof"}
+
+
+def test_load_error_after_shape_check_is_error(files):
+    # serde can attach a position to a real I/O error, so a position proves nothing
+    msg = "Failed to run verify: [pfsys] failed to load the proof: Input/output error (os error 5) at line 1 column 14"
+    assert verify(FakeEzkl(exc=RuntimeError(msg)), *files)[0] == Verdict.ERROR
+
+
+class _Boom:
+    def __init__(self, *a, **k):
+        raise OSError(28, "No space left on device")
+
+
+class _BadCleanup:
+    def __init__(self, *a, **k):
+        import tempfile
+        self._d = tempfile.mkdtemp()
+
+    def __enter__(self):
+        return self._d
+
+    def __exit__(self, *exc):
+        import shutil
+        shutil.rmtree(self._d)
+        raise OSError(16, "Device or resource busy")
+
+
+@pytest.mark.parametrize("make_dir", [_Boom, _BadCleanup])
+def test_staging_failure_is_error(files, monkeypatch, make_dir):
+    monkeypatch.setattr("pge.verdict.tempfile.TemporaryDirectory", make_dir)
+    assert verify(FakeEzkl(result=True), *files)[0] == Verdict.ERROR
+
+
+def test_snapshot_write_failure_is_error(files, monkeypatch):
+    def fail(self, data):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(Path, "write_bytes", fail)
+    assert verify(FakeEzkl(result=True), *files)[0] == Verdict.ERROR
