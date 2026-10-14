@@ -22,7 +22,7 @@ class FakeEzkl:
 @pytest.fixture()
 def files(tmp_path):
     p = tmp_path / "proof.json"
-    p.write_text("{}")
+    p.write_bytes((TINY / "proof.json").read_bytes())
     return p, TINY / "settings.json", TINY / "vk.key", TINY / "vk.key"
 
 
@@ -46,7 +46,6 @@ def test_missing_file_is_error(files):
 
 def test_messages():
     assert classify_exception("Failed to run verify: [halo2] Multi-opening proof was invalid") == Verdict.REJECT
-    assert classify_exception("Failed to run verify: [pfsys] failed to load the proof: expected value at line 1 column 1") == Verdict.REJECT
     assert classify_exception("something else broke") == Verdict.ERROR
 
 
@@ -75,6 +74,7 @@ def test_each_missing_prerequisite_is_error(files, missing):
 
 @pytest.mark.parametrize("msg", [
     "Failed to run verify: [pfsys] failed to load the proof: Permission denied (os error 13)",
+    "Failed to run verify: [pfsys] failed to load the proof: expected value at line 1 column 1",
     "Failed to run verify: [pfsys] failed to load the proof: No such file or directory (os error 2)",
     "Failed to run verify: [srs] failed to load srs from /tmp/x/[halo2].srs",
     "Failed to run verify: [srs] failed to read srs failed to fill whole buffer",
@@ -97,7 +97,9 @@ def test_verifies_a_private_copy(files):
             return True
 
     assert verify(Recorder(), *files)[0] == Verdict.ACCEPT
-    assert seen[0][0] != str(files[0]) and seen[0][1] == "{}"
+    original = json.loads(files[0].read_text())
+    assert seen[0][0] != str(files[0])
+    assert json.loads(seen[0][1]) == {"instances": original["instances"], "proof": original["proof"]}
 
 
 def test_oversized_proof_is_rejected_unread(files, tmp_path):
