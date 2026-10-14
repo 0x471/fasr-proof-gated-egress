@@ -76,7 +76,7 @@ Every request in `[-1, 1]^4` is inside. `from_float` only accepts finite F32 par
 ## 5. Output decoding
 
 - Each output tensor has its own scale (tiny: 26; multi: 13 and 26). Decode as a signed integer divided by `2^scale`.
-- Release only values decoded from the same instances that were verified. Never release the server's claimed y, the proof file's `pretty_*` fields or the proof itself: changing those fields does not invalidate the proof.
+- Release only values decoded from the same instances that were verified. Never release the server's claimed y or the proof itself, and never read the proof file's `pretty_*`, `timestamp` or `hex_proof` fields: changing them does not invalidate the proof, because EZKL verifies only the `proof` byte list.
 
 ## 6. Verify results
 
