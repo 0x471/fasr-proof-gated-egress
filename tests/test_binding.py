@@ -63,6 +63,9 @@ def test_pin_is_required():
     lambda s: s.update(model_instance_shapes=[[1, 4]]),
     lambda s: s.update(model_instance_shapes=[[1, 4], [1, 3], [1, 1]]),
     lambda s: s.update(model_instance_shapes=[[1, 1 << 20], [1, 3]]),
+    lambda s: s.update(model_instance_shapes=[[256, 257], [1, 3]]),
+    lambda s: s.update(model_input_scales=[-1]),
+    lambda s: s.update(model_output_scales=[-1]),
     lambda s: s.pop("run_args"),
 ])
 def test_bad_settings_rejected(settings, mutate):
@@ -70,6 +73,14 @@ def test_bad_settings_rejected(settings, mutate):
     mutate(s)
     with pytest.raises(BindingError):
         CircuitSpec.parse(s, "test")
+
+
+def test_largest_tensor_accepted(settings):
+    s = copy.deepcopy(settings)
+    s["model_instance_shapes"] = [[256, 256], [1, 3]]
+    s["model_input_scales"], s["model_output_scales"] = [0], [0]
+    spec = CircuitSpec.parse(s, "test")
+    assert spec.input_lens == (65536,) and spec.input_scales == (0,)
 
 
 def test_unpinned_scale_change_changes_decoding(tiny, tiny_proof):
