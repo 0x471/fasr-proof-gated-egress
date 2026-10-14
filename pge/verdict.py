@@ -104,7 +104,11 @@ def verify(ezkl, proof: str | Path, settings: str | Path, vk: str | Path, srs: s
         canonical = canonical_proof(data)
     except BindingError as e:
         return Verdict.REJECT, f"malformed proof: {e}"
-    with tempfile.TemporaryDirectory(prefix="pge-proof-") as d:
-        snapshot = Path(d) / "proof.json"
-        snapshot.write_bytes(canonical)
-        return _call(ezkl, snapshot, settings, vk, srs)
+    try:
+        with tempfile.TemporaryDirectory(prefix="pge-proof-") as d:
+            snapshot = Path(d) / "proof.json"
+            snapshot.write_bytes(canonical)
+            result = _call(ezkl, snapshot, settings, vk, srs)
+    except OSError as e:
+        return Verdict.ERROR, f"cannot stage proof: {e.strerror or type(e).__name__}"
+    return result
