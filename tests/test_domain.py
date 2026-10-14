@@ -116,3 +116,11 @@ def test_input_bound_on_its_own():
     assert d.admits([10]) and d.admits([-10])
     assert not d.admits([11]) and not d.admits([-11])
     assert not d.admits([1, 2])
+
+
+@pytest.mark.parametrize("v", [0.1, 1e300, float("inf"), float("nan"), "1"])
+def test_from_float_needs_f32_parameters(v):
+    with pytest.raises(BindingError):
+        AffineReluDomain.from_float([[0.5]], [v], 13, 26, 16384, 2)
+    with pytest.raises(BindingError):
+        AffineReluDomain.from_float([[v]], [0.5], 13, 26, 16384, 2)
