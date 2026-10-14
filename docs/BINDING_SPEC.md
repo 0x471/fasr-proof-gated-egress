@@ -1,12 +1,12 @@
 # Request binding
 
-What the device checks so that a valid proof is a proof for the request the device itself received, and what it releases. Code: `pge/binding.py`, `pge/bundle.py`, `pge/domain.py`, `pge/verdict.py`. Tests: `tests/`.
+What the device checks so that a valid proof is a proof for the request the device itself received, and what it releases. Code: `pge/binding.py`, `pge/bundle.py`, `pge/domain.py`, `pge/verdict.py`, `pge/worker.py`. Tests: `tests/`.
 
 Everything here is for EZKL 23.0.5 and the pinned test bundles. It is not a general claim about every EZKL model.
 
 ## 1. The bundle is pinned
 
-The device picks the single bundle for each request (settings, verification key, SRS) and refuses to start if any file's sha256 differs from its pin. The server never chooses between bundles: picking between two valid models with different outputs would let it choose the output.
+Required of the device service (not built yet): it picks the single bundle for each request (settings, verification key, SRS) and refuses to start if any file's sha256 differs from its pin. The server never chooses between bundles: picking between two valid models with different outputs would let it choose the output. `Bundle.load` implements the check.
 
 | Bundle | File | sha256 |
 |---|---|---|
@@ -16,11 +16,13 @@ The device picks the single bundle for each request (settings, verification key,
 | multi | vk.key | `0bd4cec6c17051d478ac3cfd3bff3ca5f4d98184673c99949bdb838b208411c7` |
 | both | kzg.srs (logrows 15) | `90807800a1c3b248a452e1732c45ee5099f38b737356f5542c0584ec9c3ebb45` |
 
-Why the settings pin is mandatory: changing only `model_output_scales` from `[26]` to `[13]` leaves the proof valid under the same vk, but the decoded output changes from 0.9666 to 7918.6 (`test_unpinned_scale_change_changes_decoding`).
+Why the settings pin is mandatory: changing only `model_output_scales` from `[26]` to `[13]` leaves the proof valid under the same vk, but the decoded output changes from 0.9666 to 7918.6 (`test_scale_only_settings_change_still_verifies`).
 
 Why pins name one build, not "the circuit": EZKL fills `required_range_checks` from a hash set, so its order can change between runs. That order changes the circuit layout and therefore the vk. Reversing only `[[-1,1],[0,16383]]` gives vk `d3c4f45c...` instead of `34ab48a8...`. Keygen itself is deterministic for a fixed ordered circuit, and the settings timestamp is not part of the vk. A regenerated bundle is a new build that needs a new pin.
 
 A pin proves byte identity. It says nothing about whether the SRS ceremony was sound.
+
+`Bundle.load` reads each file once, checks it and keeps a private read-only copy of exactly those bytes; `Bundle.verify` re-checks the copies before every call and returns ERROR if they changed. This matters because a wrong but well-formed SRS makes a valid proof fail with a genuine `[halo2]` error, which would otherwise look like a rejected proof. The copies are protected only from other users: the service's own user can still change them between the re-check and EZKL's read.
 
 ## 2. Settings are validated strictly
 
@@ -63,7 +65,13 @@ Wq = [[ 2244, -3772, -7521],      (scale 13)
 bq = [23984994, -31300542, 15411916]   (scale 26, quantized directly)
 ```
 
-`pge/domain.py` derives these from the model's float weights and checks requests against them. The tests compare its decisions with EZKL's real witness generation on random requests and on the exact boundary of each pre-activation. Every request in `[-1, 1]^4` is inside. The domain of other models has to be derived from their own compiled operations.
+`pge/domain.py` derives these from the model's F32 weights and checks requests against them. The tests compare its decisions with EZKL's real witness generation on:
+
+- random requests;
+- each pre-activation at exactly `+N` and `-N` (admitted) and at `+(N+1)` and `-(N+1)` (refused), with every other constraint well inside. These inputs are small, so they are exact F32 requests;
+- input coordinate 2 at `+N`, `-N`, `+(N+1)` and `-(N+1)` with small pre-activations. These are sent to EZKL as field elements, because `N` itself is not an F32 request at scale 13: `F32(N/8192)` quantizes to `N + 1`.
+
+Every request in `[-1, 1]^4` is inside. `from_float` only accepts finite F32 parameters and is only valid for this graph's shape (MatMul + Add + ReLU, each constant used once, no rescaling before the output). EZKL requantizes a shared bias differently, so the domain of other models has to be derived from their own compiled operations.
 
 ## 5. Output decoding
 
@@ -72,7 +80,12 @@ bq = [23984994, -31300542, 15411916]   (scale 26, quantized directly)
 
 ## 6. Verify results
 
-`pge/verdict.py` maps a verify call to ACCEPT, REJECT (invalid or malformed proof) or ERROR (missing files, crashes, timeouts, unexpected results). Only ACCEPT releases output. Tests treat ERROR as a failure, never as a rejection.
+`pge/verdict.py` maps a verify call to ACCEPT, REJECT (invalid or malformed proof) or ERROR (the check did not happen properly). Only ACCEPT releases output. Tests treat ERROR as a failure, never as a rejection.
+
+- The proof is read once, up to 1 MiB, into a private copy that EZKL then verifies. A read failure is ERROR; a larger proof is REJECT.
+- REJECT needs one of two anchored error shapes: `[halo2] ...`, or a proof parse error `[pfsys] failed to load the proof: ... at line L column C`. Everything else is ERROR, including I/O errors while loading the proof, settings, vk or SRS. The device script also requires the CLI's `verified: false` line for a `[halo2]` rejection, and `verified: true` plus exit code 0 for ACCEPT.
+- A `[halo2]` failure only says the proof is bad if settings, vk and SRS were the pinned ones, so use `Bundle.verify`, which re-checks them.
+- `verify` itself has no deadline and cannot survive a native crash. `pge/worker.py` runs it in a child process that is killed (SIGKILL) at the deadline; a timeout, crash, non-zero exit or unreadable answer is ERROR. The child's output is not size-bounded. The device script uses `timeout -k 5`, so a verifier that ignores SIGTERM is killed 5 s later.
 
 ## 7. Test vectors
 
@@ -88,5 +101,5 @@ multi: inputs  z = [0.25, -0.5], a = [-0.75, 0.125]      (scale 13)
 
 ## 8. Open
 
-- Replay: the proof binds only the encoded x and y, with no request id or nonce. The device's pending table must consume each request id once and ignore late or duplicate answers. Whether a nonce must be bound into the proved relation depends on whether fresh computation has to be proven.
+- Replay: the proof binds only the encoded x and y, with no request id or nonce. The device's pending table must consume each request id once and ignore late or duplicate answers. Binding a nonce into the proved relation would stop an old proof being replayed, but it would not by itself prove the inference was freshly computed.
 - The domain policy covers the affine + ReLU shape only.
