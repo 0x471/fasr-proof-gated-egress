@@ -10,7 +10,11 @@ import asyncio
 import enum
 import inspect
 import re
+import tempfile
 from pathlib import Path
+
+# EZKL proofs for the test bundles are about 18 KB.
+MAX_PROOF_BYTES = 1 << 20
 
 
 class Verdict(enum.Enum):
@@ -46,15 +50,27 @@ def classify_exception(msg: str) -> Verdict:
 
 
 def verify(ezkl, proof: str | Path, settings: str | Path, vk: str | Path, srs: str | Path) -> tuple[Verdict, str]:
-    for p in (proof, settings, vk, srs):
+    for p in (settings, vk, srs):
         if not Path(p).is_file():
             return Verdict.ERROR, f"missing file {p}"
+    # Read the proof once and verify a private copy, so a read failure is never taken
+    # for a malformed proof and the file can't change between the read and the check.
     try:
-        r = _run(ezkl.verify, str(proof), str(settings), str(vk), srs_path=str(srs))
-    except Exception as e:
-        lines = str(e).splitlines()
-        msg = lines[0] if lines else type(e).__name__
-        return classify_exception(msg), msg[:200]
+        with open(proof, "rb") as f:
+            data = f.read(MAX_PROOF_BYTES + 1)
+    except OSError as e:
+        return Verdict.ERROR, f"cannot read proof: {e.strerror or type(e).__name__}"
+    if len(data) > MAX_PROOF_BYTES:
+        return Verdict.REJECT, "proof too large"
+    with tempfile.TemporaryDirectory(prefix="pge-proof-") as d:
+        snapshot = Path(d) / "proof.json"
+        snapshot.write_bytes(data)
+        try:
+            r = _run(ezkl.verify, str(snapshot), str(settings), str(vk), srs_path=str(srs))
+        except Exception as e:
+            lines = str(e).splitlines()
+            msg = lines[0] if lines else type(e).__name__
+            return classify_exception(msg), msg[:200]
     if r is True:
         return Verdict.ACCEPT, ""
     if r is False:
