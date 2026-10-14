@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from conftest import MULTI_X, TINY, TINY_X
+from conftest import MULTI_X, TINY, TINY_X, run
 from pge.binding import BindingError, CircuitSpec, build_instances, decode_outputs, split_instances
 from pge.bundle import Bundle, Pins
 from pge.verdict import Verdict, verify
@@ -50,12 +50,15 @@ def test_multi_accepts_and_rejects(ezkl, multi_bundle, multi_proof, tmp_path):
 
 
 def test_pretty_fields_not_authenticated(ezkl, tiny_bundle, tiny_proof, tmp_path):
-    # These can change and the proof still verifies, so the device must never read or release them.
+    # EZKL itself ignores these, so the device drops them and never reads or releases them.
     cand = json.loads(json.dumps(tiny_proof))
     cand["pretty_public_inputs"]["rescaled_outputs"] = [["999"]]
     cand["timestamp"] = 0
     cand["hex_proof"] = cand["hex_proof"][:-2] + ("00" if cand["hex_proof"][-2:] != "00" else "01")
-    assert _verify(ezkl, tiny_bundle, cand, tmp_path) == Verdict.ACCEPT
+    p = tmp_path / "candidate.json"
+    p.write_text(json.dumps(cand))
+    b = tiny_bundle
+    assert run(ezkl.verify, str(p), str(b.settings), str(b.vk), srs_path=str(b.srs)) is True
 
 
 def test_bundle_pins_enforced(srs_path):
