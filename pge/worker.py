@@ -2,11 +2,15 @@
 
 The in-process adapter cannot stop a hung verifier or survive a native crash. Here the
 child is killed (SIGKILL) at the deadline, and a timeout, crash, non-zero exit or
-unparsable answer is ERROR. Output is bounded only by what the child writes.
+anything but exactly one well-formed answer line is ERROR.
+
+Limits: the bundle check runs before the deadline starts; only the direct child is
+killed, not processes it starts; its output size is not bounded.
 """
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +25,8 @@ _CHILD = (f"import sys; sys.path.insert(0, {str(ROOT)!r}); "
 
 def verify_in_worker(bundle: Bundle, proof: str | Path, timeout: float,
                      cmd: list[str] | None = None) -> tuple[Verdict, str]:
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0 < timeout < math.inf:
+        return Verdict.ERROR, f"bad timeout {timeout!r}"
     try:
         bundle.check()
     except Exception as e:
@@ -35,10 +41,13 @@ def verify_in_worker(bundle: Bundle, proof: str | Path, timeout: float,
         return Verdict.ERROR, f"cannot start worker: {e.strerror or type(e).__name__}"
     if r.returncode != 0:
         return Verdict.ERROR, f"worker exited with {r.returncode}"
+    lines = r.stdout.splitlines()
     try:
-        verdict, detail = json.loads(r.stdout.splitlines()[-1])
-        return Verdict(verdict), str(detail)
-    except (IndexError, ValueError, TypeError):
+        answer = json.loads(lines[0]) if len(lines) == 1 else None
+        if not (isinstance(answer, list) and len(answer) == 2 and all(isinstance(a, str) for a in answer)):
+            return Verdict.ERROR, "worker must answer with one line: [verdict, detail]"
+        return Verdict(answer[0]), answer[1]
+    except (ValueError, RecursionError):
         return Verdict.ERROR, "unreadable worker answer"
 
 
