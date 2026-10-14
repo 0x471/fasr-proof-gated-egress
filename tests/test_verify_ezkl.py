@@ -5,13 +5,13 @@ import pytest
 from conftest import MULTI_X, TINY_X
 from pge.binding import BindingError, build_instances, split_instances
 from pge.bundle import Bundle, Pins
-from pge.verdict import Verdict, verify
+from pge.verdict import Verdict
 
 
 def _verify(ezkl, bundle, proof, tmp_path):
     p = tmp_path / "candidate.json"
     p.write_text(json.dumps(proof))
-    return verify(ezkl, p, bundle.settings, bundle.vk, bundle.srs)[0]
+    return bundle.verify(ezkl, p)[0]
 
 
 def test_tiny_accepts_matching_request(ezkl, tiny_bundle, tiny_proof, tmp_path):
