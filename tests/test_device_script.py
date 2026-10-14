@@ -11,6 +11,7 @@ import time
 import pytest
 
 from conftest import ROOT, TINY
+from pge.verdict import canonical_proof
 
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux") or not all(map(shutil.which, ("timeout", "sha256sum", "python3"))),
@@ -26,7 +27,7 @@ if [ "$1" = --version ]; then
 fi
 proof=""
 while [ $# -gt 0 ]; do [ "$1" = --proof-path ] && proof="$2"; shift; done
-good=0; cmp -s "$proof" proof.json && good=1
+good=0; cmp -s "$proof" good_canonical.json && good=1
 case "$STUB" in accept_all) good=1;; reject_all) good=0;; esac
 if [ $good = 1 ]; then
   echo "[*] {TS}, ezkl::execute] - verified: true"; echo "[*] {TS}, ezkl] - succeeded"; exit 0
@@ -42,9 +43,6 @@ case "$STUB" in
     echo "[E] {TS}, ezkl] - [srs] something"; exit 1;;
   mutate) echo x >> vk.key;;
 esac
-if [ "$proof" = garbage.json ]; then
-  echo "[E] {TS}, ezkl] - [pfsys] failed to load the proof: expected value at line 1 column 1"; exit 1
-fi
 echo "[*] {TS}, ezkl::execute] - verified: false"
 echo "[E] {TS}, ezkl] - [halo2] The constraint system is not satisfied"
 exit 1
@@ -68,6 +66,10 @@ def device(tmp_path):
     run.mkdir()
     for name in ("proof.json", "settings.json", "vk.key"):
         shutil.copy(TINY / name, run / name)
+    (run / "pge").mkdir()
+    for name in ("__init__.py", "binding.py", "verdict.py"):
+        shutil.copy(ROOT / "pge" / name, run / "pge" / name)
+    (run / "good_canonical.json").write_bytes(canonical_proof((TINY / "proof.json").read_bytes()))
     (run / "kzg.srs").write_bytes(b"stand-in srs")
     archive = _archive()
     (home / "base" / "cache" / "ezkl.tgz").write_bytes(archive)

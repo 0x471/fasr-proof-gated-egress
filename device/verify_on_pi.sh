@@ -29,6 +29,8 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp "$ART"/{proof.json,settings.json,vk.key} "$STAGE"/
 cp "$SRS" "$STAGE/kzg.srs"
+mkdir "$STAGE/pge"
+cp "$ROOT"/pge/{__init__,binding,verdict}.py "$STAGE/pge"/
 echo "== pinned inputs (local)"
 if command -v sha256sum >/dev/null; then SUM=(sha256sum); else SUM=(shasum -a 256); fi
 (cd "$STAGE" && "${SUM[@]}" -c - <<<"$PINS")
@@ -38,7 +40,7 @@ if [ "$HOST" = local ]; then
   mkdir -p "$HOME/$REMOTE_BASE/cache"
   RUN_DIR="$(mktemp -d "$HOME/$REMOTE_BASE/run.XXXXXX")"
   echo "== local run directory: $RUN_DIR"
-  cp "$STAGE"/{proof.json,settings.json,vk.key,kzg.srs} "$RUN_DIR"/
+  cp -R "$STAGE"/{proof.json,settings.json,vk.key,kzg.srs,pge} "$RUN_DIR"/
   rc=0
   bash "$ROOT/device/check_verifier.sh" "$RUN_DIR" "${ARGS[@]}" || rc=$?
   exit $rc
@@ -47,6 +49,6 @@ fi
 SSH=(ssh -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 "$HOST")
 RUN_DIR="$("${SSH[@]}" "mkdir -p ~/$REMOTE_BASE/cache && mktemp -d ~/$REMOTE_BASE/run.XXXXXX")"
 echo "== remote run directory: $RUN_DIR"
-scp -q -o ConnectTimeout=10 "$STAGE"/{proof.json,settings.json,vk.key,kzg.srs} "$HOST:$RUN_DIR/"
+scp -q -r -o ConnectTimeout=10 "$STAGE"/{proof.json,settings.json,vk.key,kzg.srs,pge} "$HOST:$RUN_DIR/"
 
 "${SSH[@]}" "bash -s -- $(printf '%q ' "$RUN_DIR" "${ARGS[@]}")" < "$ROOT/device/check_verifier.sh"

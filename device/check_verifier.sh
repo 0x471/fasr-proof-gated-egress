@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs on the device, inside a run directory holding proof.json, settings.json, vk.key and kzg.srs.
+# Runs on the device, inside a run directory holding proof.json, settings.json, vk.key, kzg.srs
+# and the pge package (for the proof shape check).
 # Fetches the pinned EZKL CLI, checks accept and reject cases, then times verification.
 # Args: run_dir cache_base ezkl_version archive archive_sha256 runs timeout_s pins
 # Needs GNU coreutils (timeout, sha256sum, date +%N) and python3.
@@ -33,6 +34,30 @@ json.dump(q, open("tampered_input.json", "w"))
 PY
 printf 'bad\n' > garbage.json
 
+# Writes the canonical form of the proof in $1 to candidate.json. Exit 3 means the proof
+# is malformed, so it is rejected without running the CLI; any other failure is ERROR.
+canonicalize() {
+  python3 -I - "$1" <<'PY'
+import os
+import sys
+sys.path.insert(0, os.getcwd())
+from pge.binding import BindingError
+from pge.verdict import canonical_proof, read_proof
+try:
+    data = read_proof(sys.argv[1])
+except OSError:
+    sys.exit(2)
+except BindingError:
+    sys.exit(3)
+try:
+    out = canonical_proof(data)
+except BindingError:
+    sys.exit(3)
+with open("candidate.json", "wb") as f:
+    f.write(out)
+PY
+}
+
 # Sets RC and leaves the CLI's output (stdout and stderr) in verify_out.txt.
 run_verify() {
   set +e
@@ -43,17 +68,16 @@ run_verify() {
 }
 
 # The CLI logs "[E] [time, ezkl] - <error>" and, only when verification itself ran,
-# "[*] [time, ezkl::execute] - verified: true|false". REJECT needs one of two anchored
-# shapes; anything else, including I/O errors and signals, is ERROR.
+# "[*] [time, ezkl::execute] - verified: true|false". REJECT needs a [halo2] error after
+# "verified: false"; anything else, including load errors and signals, is ERROR.
 classify() {
   local out err
   out="$(head -c 65536 verify_out.txt)"
   err="$(sed -n 's/^\[E\] \[[^]]*, ezkl\] - //p' <<<"$out")"
   if [ "$RC" -eq 0 ] && [ -z "$err" ] && grep -qx '\[\*\] \[[^]]*, ezkl::execute\] - verified: true' <<<"$out"; then
     echo ACCEPT
-  elif [ "$RC" -eq 1 ] && [ -n "$err" ] && [[ "$err" != *$'\n'* ]] && {
-      { [[ "$err" == "[halo2] "* ]] && grep -qx '\[\*\] \[[^]]*, ezkl::execute\] - verified: false' <<<"$out"; } ||
-      [[ "$err" =~ ^\[pfsys\]\ failed\ to\ load\ the\ proof:\ .*\ at\ line\ [0-9]+\ column\ [0-9]+$ ]]; }; then
+  elif [ "$RC" -eq 1 ] && [ -n "$err" ] && [[ "$err" != *$'\n'* ]] && [[ "$err" == "[halo2] "* ]] &&
+      grep -qx '\[\*\] \[[^]]*, ezkl::execute\] - verified: false' <<<"$out"; then
     echo REJECT
   else
     echo "ERROR(rc=$RC)"
@@ -62,10 +86,20 @@ classify() {
 
 fail=0
 check() {
-  local got
+  local got c
   recheck
-  run_verify "$3"
-  got="$(classify)"
+  set +e
+  canonicalize "$3"
+  c=$?
+  set -e
+  if [ $c -eq 3 ]; then
+    got=REJECT
+  elif [ $c -ne 0 ]; then
+    got="ERROR(prepare=$c)"
+  else
+    run_verify candidate.json
+    got="$(classify)"
+  fi
   if [ "$got" = "$2" ]; then echo "PASS  $1: $got"; else echo "FAIL  $1: got $got, want $2"; fail=1; fi
 }
 check "valid proof" ACCEPT proof.json
@@ -76,11 +110,12 @@ recheck
 [ $fail -eq 0 ] || exit 1
 
 echo "== timing $RUNS runs of the whole CLI (start-up + load + verify)"
+canonicalize proof.json || { echo "FAIL: cannot prepare proof.json"; exit 1; }
 : > timings_ms.txt
 i=0
 while [ $i -lt "$RUNS" ]; do
   s=$(date +%s%N)
-  run_verify proof.json
+  run_verify candidate.json
   e=$(date +%s%N)
   v="$(classify)"
   [ "$v" = ACCEPT ] || { echo "FAIL: run $i gave $v"; exit 1; }
