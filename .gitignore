@@ -1,0 +1,13 @@
+# Environments and caches
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Scratch prover outputs (regenerable; large keys)
+prover/artifacts/
+
+# Large or secret key material anywhere...
+*.srs
+*.key
+# ...except the pinned, public verification key used by the tests
+!tests/fixtures/*/vk.key
