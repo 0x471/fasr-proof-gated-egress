@@ -46,7 +46,10 @@ class CircuitSpec:
 
     @classmethod
     def from_settings(cls, path: str | Path, expected_sha256: str) -> "CircuitSpec":
-        raw = Path(path).read_bytes()
+        return cls.from_bytes(Path(path).read_bytes(), expected_sha256)
+
+    @classmethod
+    def from_bytes(cls, raw: bytes, expected_sha256: str) -> "CircuitSpec":
         digest = hashlib.sha256(raw).hexdigest()
         if digest != expected_sha256:
             raise BindingError(f"settings sha256 {digest} does not match pin {expected_sha256}")
