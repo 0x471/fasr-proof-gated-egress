@@ -54,9 +54,9 @@ sequenceDiagram
 |---|---|
 | v0 baseline | The verifier as a normal program on standard Raspberry Pi OS |
 | v1 stripped | A minimal Buildroot system that runs only the verifier; two wired ports; a strict binary message format; fuzzed |
-| v2 hardened | A fixed release schedule, signed and rollback-protected updates, and, if the hardware allows, secure boot and a TPM counter |
+| v2 hardened | A fixed release schedule in arrival order, signed and rollback-protected updates, and secure boot; optionally a TPM counter |
 
-Each version is measured the same way: reachable services, trusted code size, verification time, and leakage through timing and failures under tested attacks.
+Each version is measured the same way: reachable services, trusted code size, verification time, and leakage through each side channel under tested attacks.
 
 ## What's here
 
@@ -100,6 +100,6 @@ The current device checks pass with the real aarch64 CLI in a Debian 13 containe
 
 ## Scope
 
-In scope: hardening and measuring the verifying device, request binding, output channels (timing, failures, sizes) and the update path.
+In scope: hardening and measuring the verifying device, request binding, the update path, secure boot, and side channels a compromised server controls: timing, ordering, deliberate failures, packet sizes and header fields.
 
-Out of scope: the soundness of the proof system, determined physical attacks on a Raspberry Pi, and what ordinary outputs reveal about a model.
+Out of scope: the soundness of the proof system, physical attacks (including physical side channels such as power or EM), and what ordinary outputs reveal about a model.
