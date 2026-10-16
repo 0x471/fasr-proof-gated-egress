@@ -31,6 +31,10 @@ good=0; cmp -s "$proof" good_canonical.json && good=1
 case "$STUB" in accept_all) good=1;; reject_all) good=0;; esac
 if [ $good = 1 ]; then
   case "$STUB" in
+    true_false) echo "[*] {TS}, ezkl::execute] - verified: true"; echo "[*] {TS}, ezkl::execute] - verified: false"; exit 0;;
+    true_true) echo "[*] {TS}, ezkl::execute] - verified: true"; echo "[*] {TS}, ezkl::execute] - verified: true"; exit 0;;
+    filler_error) echo "[*] {TS}, ezkl::execute] - verified: true"; head -c 66000 /dev/zero | tr '\0' x; echo
+      echo "[E] {TS}, ezkl] - [srs] failed to load srs"; exit 0;;
     rc1_verified) echo "[*] {TS}, ezkl::execute] - verified: true"; exit 1;;
     rc0_silent) echo "[*] {TS}, ezkl] - succeeded"; exit 0;;
     extra_sample) [ -f timings_ms.txt ] && echo 1 >> timings_ms.txt;;
@@ -45,6 +49,8 @@ case "$STUB" in
     exit 1;;
   srs_path) echo "[E] {TS}, ezkl] - [srs] failed to load srs from /x/[halo2].srs"; exit 1;;
   halo2_unverified) echo "[E] {TS}, ezkl] - [halo2] The constraint system is not satisfied"; exit 1;;
+  true_false_halo2) echo "[*] {TS}, ezkl::execute] - verified: true"; echo "[*] {TS}, ezkl::execute] - verified: false"
+    echo "[E] {TS}, ezkl] - [halo2] The constraint system is not satisfied"; exit 1;;
   two_errors) echo "[*] {TS}, ezkl::execute] - verified: false"
     echo "[E] {TS}, ezkl] - [halo2] The constraint system is not satisfied"
     echo "[E] {TS}, ezkl] - [srs] something"; exit 1;;
@@ -76,7 +82,7 @@ def device(tmp_path):
     for name in ("proof.json", "settings.json", "vk.key"):
         shutil.copy(TINY / name, run / name)
     (run / "pge").mkdir()
-    for name in ("__init__.py", "binding.py", "verdict.py"):
+    for name in ("__init__.py", "binding.py", "bundle.py", "cli.py", "proc.py", "verdict.py"):
         shutil.copy(ROOT / "pge" / name, run / "pge" / name)
     (run / "good_canonical.json").write_bytes(canonical_proof((TINY / "proof.json").read_bytes()))
     (run / "kzg.srs").write_bytes(b"stand-in srs")
@@ -103,7 +109,8 @@ def test_correct_cli_passes(device):
 
 
 @pytest.mark.parametrize("stub", ["accept_all", "reject_all", "segv", "perm", "eio", "srs_path", "halo2_unverified",
-                                  "two_errors", "mutate", "swap", "rc1_verified", "rc0_silent", "extra_sample"])
+                                  "two_errors", "mutate", "swap", "rc1_verified", "rc0_silent", "extra_sample",
+                                  "true_false", "true_true", "filler_error", "true_false_halo2"])
 def test_wrong_behaviour_fails(device, stub):
     rc, out, _ = device(stub)
     assert rc == 1 and "all checks passed" not in out, out
@@ -162,3 +169,11 @@ def test_failed_shape_check_is_error(device):
 def test_pins_are_rechecked_before_each_case(device):
     rc, out, _ = device("swap")
     assert rc == 1 and "pinned inputs changed" in out and "tampered input" not in out, out
+
+
+def test_contradictory_or_padded_logs_are_errors(device):
+    for stub in ("true_false", "true_true", "filler_error"):
+        rc, out, _ = device(stub)
+        assert "FAIL  valid proof: got ERROR(rc=0), want ACCEPT" in out, (stub, out)
+    rc, out, _ = device("true_false_halo2")
+    assert "FAIL  tampered output: got ERROR(rc=1), want REJECT" in out, out
