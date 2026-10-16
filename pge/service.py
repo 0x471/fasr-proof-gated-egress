@@ -21,10 +21,21 @@ from pge.binding import BindingError, CircuitSpec, build_instances, decode_outpu
 from pge.domain import AffineReluDomain
 from pge.protocol import (CLIENT_MAX, REPLY_MAX, SERVER_MAX, ProtocolError, client_error, client_ok, frame,
                           parse_client, parse_server, read_frame, server_request)
-from pge.verdict import Verdict
+from pge.verdict import MAX_PROOF_BYTES, Verdict
 
 # Takes the proof JSON the device built and a timeout in seconds.
 Verifier = Callable[[bytes, float], "tuple[Verdict, str]"]
+
+# Requests queued to a server that stopped reading; past this the link is dropped.
+SERVER_BUFFER_MAX = 1 << 20
+
+
+def _number(v, lo: float, hi: float) -> bool:
+    return not isinstance(v, bool) and isinstance(v, (int, float)) and lo < v <= hi
+
+
+def _count(v, lo: int, hi: int) -> bool:
+    return type(v) is int and lo <= v <= hi
 
 
 @dataclass(frozen=True)
@@ -34,6 +45,20 @@ class Policy:
     halt_after: int | None = None
     # EZKL accepts a valid proof with bytes appended, so the length must be pinned to stop the server choosing it.
     proof_bytes: int | None = None
+    max_clients: int = 64
+    idle: float = 60.0
+
+    def __post_init__(self):
+        if not _number(self.deadline, 0, 3600):
+            raise ValueError("deadline must be a number of seconds in (0, 3600]")
+        if not _number(self.idle, 0, 3600):
+            raise ValueError("idle must be a number of seconds in (0, 3600]")
+        if not _count(self.max_pending, 1, 4096) or not _count(self.max_clients, 1, 4096):
+            raise ValueError("max_pending and max_clients must be integers in [1, 4096]")
+        if self.halt_after is not None and not _count(self.halt_after, 1, 1 << 30):
+            raise ValueError("halt_after must be a positive integer or None")
+        if self.proof_bytes is not None and not _count(self.proof_bytes, 1, MAX_PROOF_BYTES):
+            raise ValueError("proof_bytes must be a positive integer or None")
 
 
 @dataclass
@@ -49,21 +74,34 @@ class _Pending:
     checking: bool = False
 
 
+def _stderr_log(rec: dict) -> None:
+    print(json.dumps(rec), file=sys.stderr, flush=True)
+
+
 @dataclass
 class Gate:
     spec: CircuitSpec
     verifier: Verifier
     domain: AffineReluDomain | None = None
     policy: Policy = Policy()
-    log: Callable[[dict], None] = lambda rec: print(json.dumps(rec), file=sys.stderr, flush=True)
+    log: Callable[[dict], None] = _stderr_log
     seq: int = 0
     failures: int = 0
     halted: bool = False
+    clients: int = 0
     counts: Counter = field(default_factory=Counter)
     pending: dict[int, _Pending] = field(default_factory=dict)
     _server: asyncio.StreamWriter | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _pool: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1))
+    _tasks: set = field(default_factory=set)
+
+    def _log(self, rec: dict) -> None:
+        # A broken log must never stop a request from being answered.
+        try:
+            self.log(rec)
+        except Exception:
+            self.counts["log_error"] += 1
 
     def _record(self, result: str, p: _Pending | None, detail: str = "", x_sha256: str = "") -> None:
         self.counts[result] += 1
@@ -72,15 +110,28 @@ class Gate:
             rec.update(seq=p.seq, x_sha256=p.x_sha256, ms=round((time.monotonic() - p.started) * 1000, 1))
         elif x_sha256:
             rec["x_sha256"] = x_sha256
-        self.log(rec)
+        self._log(rec)
 
-    def _fail(self, p: _Pending, result: str, detail: str) -> None:
+    @staticmethod
+    def _send(reply: Callable[[bytes], None], msg: bytes) -> None:
+        try:
+            reply(msg)
+        except Exception:
+            pass
+
+    def _fail(self, p: _Pending, result: str, detail: str, count: bool = True) -> None:
+        """Answer unavailable. Failures the server caused count towards halt_after."""
+        self._send(p.reply, client_error(p.cid, "unavailable"))
+        self._record(result, p, detail)
+        if not count:
+            return
         self.failures += 1
         if self.policy.halt_after is not None and self.failures >= self.policy.halt_after and not self.halted:
             self.halted = True
-            self.log({"result": "halted", "detail": f"{self.failures} failures"})
-        self._record(result, p, detail)
-        p.reply(client_error(p.cid, "unavailable"))
+            self._log({"result": "halted", "detail": f"{self.failures} failures"})
+            for seq in sorted(self.pending):
+                q = self._finish(seq)
+                self._fail(q, "halted", "device halted", count=False)
 
     def _finish(self, seq: int) -> _Pending | None:
         p = self.pending.pop(seq, None)
@@ -89,52 +140,70 @@ class Gate:
         return p
 
     def submit(self, cid: int, x: list, reply: Callable[[bytes], None]) -> None:
+        """Answer exactly once through reply, now or later."""
         try:
             encoded = encode_inputs(self.spec, x)
             if self.domain is not None:
                 self.domain.check(self.spec, x)
         except (BindingError, TypeError) as e:
+            self._send(reply, client_error(cid, "bad_request"))
             self._record("bad_request", None, str(e))
-            reply(client_error(cid, "bad_request"))
             return
         x_sha256 = hashlib.sha256(json.dumps(encoded).encode()).hexdigest()
-        if self.halted:
-            self._record("halted", None, x_sha256=x_sha256)
-            reply(client_error(cid, "unavailable"))
-            return
-        if len(self.pending) >= self.policy.max_pending:
-            self._record("busy", None, x_sha256=x_sha256)
-            reply(client_error(cid, "unavailable"))
+        if self.halted or len(self.pending) >= self.policy.max_pending:
+            self._send(reply, client_error(cid, "unavailable"))
+            self._record("halted" if self.halted else "busy", None, x_sha256=x_sha256)
             return
         loop = asyncio.get_running_loop()
         self.seq += 1
         now = time.monotonic()
         p = _Pending(seq=self.seq, x=x, reply=reply, cid=cid, started=now, due=now + self.policy.deadline,
                      x_sha256=x_sha256)
-        if self._server is None or self._server.is_closing():
+        server = self._server
+        if server is None or server.is_closing():
             self._fail(p, "no_server", "no server connection")
             return
         p.timer = loop.call_later(self.policy.deadline, self._expire, p.seq)
         self.pending[p.seq] = p
-        self._server.write(frame(server_request(p.seq, x)))
+        server.write(frame(server_request(p.seq, x)))
+        if server.transport.get_write_buffer_size() > SERVER_BUFFER_MAX:
+            self._record("server_stalled", None, "server is not reading requests")
+            server.close()
 
     def _expire(self, seq: int) -> None:
         p = self._finish(seq)
         if p is not None:
             self._fail(p, "deadline", f"no checked answer within {self.policy.deadline} s")
 
+    def _expired(self, p: _Pending) -> bool:
+        # The timer can run late if the loop stalls, so the deadline is also checked directly.
+        if time.monotonic() < p.due:
+            return False
+        if self._finish(p.seq) is not None:
+            self._fail(p, "deadline", f"no checked answer within {self.policy.deadline} s")
+        return True
+
     def on_answer(self, seq: int, outputs: list, proof: bytes) -> None:
         p = self.pending.get(seq)
         if p is None:
+            # The seq is server-chosen, so it is counted but not logged.
             self.counts["stale_answer"] += 1
-            self.log({"result": "stale_answer", "seq": seq})
+            self._log({"result": "stale_answer"})
             return
         if p.checking:
             self.counts["duplicate_answer"] += 1
-            self.log({"result": "duplicate_answer", "seq": seq})
+            self._log({"result": "duplicate_answer", "seq": seq})
             return
         p.checking = True
-        asyncio.get_running_loop().create_task(self._check(p, outputs, proof))
+        task = asyncio.get_running_loop().create_task(self._check(p, outputs, proof))
+        self._tasks.add(task)
+        task.add_done_callback(self._done)
+
+    def _done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            self.counts["check_crashed"] += 1
+            self._log({"result": "check_crashed", "detail": type(task.exception()).__name__})
 
     async def _check(self, p: _Pending, outputs: list, proof: bytes) -> None:
         try:
@@ -147,57 +216,89 @@ class Gate:
         else:
             data = json.dumps({"instances": instances, "proof": list(proof)}).encode()
             async with self._lock:
-                if p.seq not in self.pending:
+                if p.seq not in self.pending or self._expired(p):
                     return
-                budget = max(p.due - time.monotonic(), 0.001)
                 try:
-                    verdict, detail = await asyncio.get_running_loop().run_in_executor(
-                        self._pool, self.verifier, data, budget)
+                    result = await asyncio.get_running_loop().run_in_executor(
+                        self._pool, self.verifier, data, p.due - time.monotonic())
+                    verdict, detail = result
+                    if not isinstance(verdict, Verdict) or not isinstance(detail, str):
+                        raise TypeError("verifier must return (Verdict, str)")
                 except Exception as e:
-                    verdict, detail = Verdict.ERROR, f"verifier raised {type(e).__name__}"
-        if self._finish(p.seq) is None:
+                    verdict, detail = Verdict.ERROR, f"verifier failed: {type(e).__name__}"
+        if p.seq not in self.pending:
             self.counts["late_check"] += 1
             return
-        if verdict is Verdict.ACCEPT:
+        if self._expired(p):
+            return
+        self._finish(p.seq)
+        if verdict is not Verdict.ACCEPT:
+            self._fail(p, verdict.value, detail)
+        else:
             msg = client_ok(p.cid, y)
             if len(msg) > REPLY_MAX:
                 self._fail(p, "error", "reply too large")
                 return
+            self._send(p.reply, msg)
             self._record("accept", p)
-            p.reply(msg)
-        else:
-            self._fail(p, verdict.value, detail)
 
     def fail_all(self, detail: str) -> None:
         for seq in sorted(self.pending):
             p = self._finish(seq)
-            self._fail(p, "disconnect", detail)
+            if p is not None:
+                self._fail(p, "disconnect", detail)
 
     async def serve_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """Serve one client. After it stops sending (end of stream or idle), its pending answers are still sent."""
+        if self.clients >= self.policy.max_clients:
+            self._record("client_refused", None, "too many connections")
+            writer.close()
+            return
+        self.clients += 1
+        outstanding = 0
+        drained = asyncio.Event()
+        drained.set()
+
         def reply(msg: bytes) -> None:
+            nonlocal outstanding
+            outstanding -= 1
+            if outstanding == 0:
+                drained.set()
             if not writer.is_closing():
                 writer.write(frame(msg))
 
         last = -1
+        violated = False
         try:
             while True:
                 try:
-                    data = await read_frame(reader, CLIENT_MAX)
+                    data = await asyncio.wait_for(read_frame(reader, CLIENT_MAX), self.policy.idle)
                     if data is None:
                         break
                     cid, x = parse_client(data)
+                except asyncio.TimeoutError:
+                    self._record("client_idle", None)
+                    break
                 except ProtocolError as e:
                     self._record("client_violation", None, str(e))
+                    violated = True
                     break
                 if cid <= last:
                     self._record("client_violation", None, "ids must be strictly increasing")
+                    violated = True
                     break
                 last = cid
+                outstanding += 1
+                drained.clear()
                 self.submit(cid, x, reply)
                 await writer.drain()
-        except (ConnectionError, OSError):
+            if not violated:
+                await asyncio.wait_for(drained.wait(), self.policy.deadline + 1)
+                await writer.drain()
+        except (ConnectionError, OSError, asyncio.TimeoutError):
             pass
         finally:
+            self.clients -= 1
             writer.close()
 
     async def attach_server(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -206,14 +307,15 @@ class Gate:
         detail = "server closed the connection"
         try:
             while True:
-                data = await read_frame(reader, SERVER_MAX)
+                data = await read_frame(reader, SERVER_MAX, body_timeout=self.policy.deadline)
                 if data is None:
                     break
                 seq, outputs, proof = parse_server(data)
                 self.on_answer(seq, outputs, proof)
-        except ProtocolError as e:
-            self._record("server_violation", None, str(e))
-            detail = f"server violation: {e}"
+        except ProtocolError:
+            # Fixed text: the error message can hold server-chosen values.
+            self._record("server_violation", None, "malformed frame or answer")
+            detail = "server violation"
         except (ConnectionError, OSError) as e:
             detail = f"server connection lost: {type(e).__name__}"
         finally:
@@ -228,7 +330,7 @@ class Gate:
             try:
                 reader, writer = await asyncio.open_connection(host, port)
             except OSError as e:
-                self.log({"result": "connect_failed", "detail": type(e).__name__})
+                self._log({"result": "connect_failed", "detail": type(e).__name__})
             else:
                 delay = 0.5
                 await self.attach_server(reader, writer)
