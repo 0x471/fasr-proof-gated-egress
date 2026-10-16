@@ -666,3 +666,17 @@ def test_bad_verifier_result_is_unavailable(tiny_bundle):
         assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
         assert st.results() == ["error"]
     run_stack(tiny_bundle, lambda data, timeout: ("accept", ""), t)
+
+
+def test_observer_recovers_the_timing_bits(tiny_bundle, verifier):
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import decode_bits, trace
+
+    bits = "1101001"
+
+    async def t(st):
+        port = st.servers[1].sockets[0].getsockname()[1]
+        rows = await trace("127.0.0.1", port, [[TINY_X]] * len(bits))
+        assert [r["id"] for r in rows] == list(range(len(bits))) and all(r["answer"]["ok"] for r in rows)
+        assert decode_bits(rows) == bits
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "timing_bits", bits=bits, slot=0.5))
