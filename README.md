@@ -26,7 +26,7 @@ flowchart LR
     E --> U
 ```
 
-The device only listens on the outside. It connects to the server itself, although that connection still carries hostile data. The fixed release time in the plan is target behaviour; there is no service or scheduler yet.
+The device only listens on the outside. It connects to the server itself, although that connection still carries hostile data. The v0 service (`pge/service.py`, `docs/SERVICE_SPEC.md`) releases as soon as a check passes; the fixed release time is v2 target behaviour.
 
 ## Request path
 
@@ -67,11 +67,14 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `pge/domain.py` | Input domain of an affine + ReLU circuit, so impossible requests are refused up front |
 | `pge/verdict.py` | Turn a verify call into ACCEPT, REJECT or ERROR |
 | `pge/worker.py` | Run one verify in a child process with a deadline |
+| `pge/protocol.py` | The service's wire format: length-prefixed JSON frames, strict parsing |
+| `pge/service.py` | The v0 gate service: one bundle, one answer per request, the decoded output or one generic error |
 | `pge/cli.py` | Verify with EZKL's official CLI (no Python package exists for Pi OS), with a deadline on its whole process group |
 | `docs/BINDING_SPEC.md` | The binding rules, pitfalls and test vectors |
+| `docs/SERVICE_SPEC.md` | The v0 service: messages, request lifecycle, failure policy, replay |
 | `tests/` | Unit tests, differential tests against EZKL's own encoding and witness generation, end-to-end verification |
-| `tests/fixtures/` | Two pinned bundles: `tiny` (y = ReLU(xW + b), 4 to 3) and `multi` (two inputs, two outputs, scales 13 and 26) |
-| `prover/` | Build and prove the test circuits with EZKL; tamper checks |
+| `tests/fixtures/` | Two pinned bundles: `tiny` (y = ReLU(xW + b), 4 to 3, with its input domain in `domain.json`) and `multi` (two inputs, two outputs, scales 13 and 26) |
+| `prover/` | Build and prove the test circuits with EZKL; tamper checks; `server.py`, the laptop AI server, honest or misbehaving |
 | `device/verify_on_pi.sh` | Stage the pinned tiny bundle and run the device checks on the Pi over SSH, or locally on Linux with `HOST=local` |
 | `device/check_verifier.sh` | The device checks: fetch the pinned EZKL CLI, check accept and reject cases, time verification |
 
@@ -86,6 +89,19 @@ uv pip install --python .venv/bin/python "ezkl==23.0.5" onnx numpy pytest
 The verification tests need the pinned SRS. They use `prover/artifacts/kzg.srs` or `$PGE_SRS` if present and otherwise download it with EZKL's `get_srs`, then check the pin. CI sets `PGE_REQUIRE_INTEGRATION=1`, so a missing SRS or EZKL fails the run instead of skipping those tests.
 
 `tests/test_cli.py` runs `pge/cli.py` against stub CLIs, and against the real CLI when `PGE_EZKL_CLI` points to it (CI does this). `tests/test_device_script.py` runs the device checks against a stub CLI and only runs on Linux. CI also runs `device/verify_on_pi.sh` with `HOST=local` and EZKL's x86_64 Linux CLI.
+
+## Running the v0 service
+
+On the laptop, start the AI server, then the gate (with EZKL's CLI on Linux):
+
+```
+.venv/bin/python prover/server.py --listen 127.0.0.1:8701
+python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main; main()' \
+  --listen 0.0.0.0:8700 --server 127.0.0.1:8701 --bundle BUNDLE_DIR --pins device/tiny.sha256 \
+  --cli ./ezkl --domain tests/fixtures/tiny/domain.json
+```
+
+`BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. `prover/server.py --mode` makes the server misbehave (see its docstring). Not yet run on the Pi.
 
 ## Measured so far
 
