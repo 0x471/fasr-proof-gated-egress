@@ -1,0 +1,35 @@
+name: spike
+on:
+  push:
+    paths: ["spike/**", ".github/workflows/spike.yml"]
+permissions:
+  contents: read
+jobs:
+  rust-verifier:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "ezkl==23.0.5"
+      - name: fetch the pinned srs
+        run: |
+          python - <<'PY'
+          import asyncio
+          import hashlib
+          import inspect
+          import ezkl
+
+          async def get():
+              r = ezkl.get_srs(settings_path="tests/fixtures/tiny/settings.json", srs_path="kzg.srs")
+              return await r if inspect.isawaitable(r) else r
+
+          assert asyncio.run(get()) is True
+          digest = hashlib.sha256(open("kzg.srs", "rb").read()).hexdigest()
+          assert digest == "90807800a1c3b248a452e1732c45ee5099f38b737356f5542c0584ec9c3ebb45", digest
+          PY
+      - name: build
+        run: echo "BIN=$(spike/rust-verifier/build.sh "$RUNNER_TEMP")" >> "$GITHUB_ENV"
+      - run: ls -l "$BIN" && ldd "$BIN" || true
+      - run: spike/rust-verifier/check.sh "$BIN" kzg.srs
