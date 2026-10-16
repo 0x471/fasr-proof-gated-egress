@@ -124,3 +124,8 @@ def test_from_float_needs_f32_parameters(v):
         AffineReluDomain.from_float([[0.5]], [v], 13, 26, 16384, 2)
     with pytest.raises(BindingError):
         AffineReluDomain.from_float([[v]], [0.5], 13, 26, 16384, 2)
+
+
+def test_domain_file_matches_the_model(dom):
+    from pge.service import load_domain
+    assert load_domain(TINY / "domain.json") == dom
