@@ -80,6 +80,7 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `observer/client.py` | The outside observer: sends requests to the gate and records each answer with its time (for the side-channel experiments) |
 | `device/verify_on_pi.sh` | Stage the pinned tiny bundle and run the device checks on the Pi over SSH, or locally on Linux with `HOST=local` |
 | `device/check_verifier.sh` | The device checks: fetch the pinned EZKL CLI, check accept and reject cases, time verification |
+| `image/build.sh`, `image/v1.fragment` | Build the device image with Buildroot 2025.02.18 LTS (digest-pinned) on a Linux host: the Pi 4 defconfig plus glibc and Python. Work in progress towards v1 |
 | `device/measure.sh` | Attack-surface snapshot for every version: packages, running services, processes, listening sockets, hashes of config and tools |
 
 ## Running the tests
