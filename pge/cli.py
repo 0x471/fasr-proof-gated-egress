@@ -3,7 +3,8 @@
 Pi OS has no EZKL Python wheel, so the device runs the pinned CLI binary instead of the
 Python package. The proof is checked and reduced to its canonical form in memory first,
 as in verdict.verify. The CLI then runs with a minimal environment in its own process
-group, which is killed (SIGKILL) at the deadline. The verdict is anchored on the exit
+group, which is killed (SIGKILL) at the deadline or as soon as its output passes 64 KiB
+(pge/proc.py). The verdict is anchored on the exit
 code and the CLI's log lines, as in device/check_verifier.sh.
 
 Limits: the bundle check runs before the deadline starts, and processes the CLI leaves
@@ -14,13 +15,12 @@ from __future__ import annotations
 import math
 import os
 import re
-import signal
-import subprocess
 import tempfile
 from pathlib import Path
 
 from pge.binding import BindingError
 from pge.bundle import Bundle
+from pge.proc import NO_START, TIMEOUT, TOO_LONG, run_bounded
 from pge.verdict import MAX_PROOF_BYTES, Verdict, canonical_proof, read_proof
 
 MAX_OUTPUT_BYTES = 1 << 16
@@ -54,25 +54,14 @@ def _env() -> dict[str, str]:
     return env
 
 
-def _run(argv: list[str], log: Path, timeout: float) -> tuple[Verdict, str]:
-    with open(log, "wb") as f:
-        try:
-            p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT,
-                                 env=_env(), start_new_session=True)
-        except OSError as e:
-            return Verdict.ERROR, f"cannot start cli: {e.strerror or type(e).__name__}"
-        try:
-            rc = p.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            # The group still has its leader until we reap it, so its id can't be reused yet.
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except OSError:
-                p.kill()
-            p.wait()
-            return Verdict.ERROR, f"verify timed out after {timeout} s"
-    with open(log, "rb") as f:
-        out = f.read(MAX_OUTPUT_BYTES + 1)
+def _run(argv: list[str], timeout: float) -> tuple[Verdict, str]:
+    status, rc, out = run_bounded(argv, timeout, MAX_OUTPUT_BYTES, env=_env())
+    if status == NO_START:
+        return Verdict.ERROR, f"cannot start cli: {out.decode(errors='replace')}"
+    if status == TIMEOUT:
+        return Verdict.ERROR, f"verify timed out after {timeout} s"
+    if status == TOO_LONG:
+        return Verdict.ERROR, "cli output too long"
     return classify_cli(rc, out)
 
 
@@ -105,6 +94,6 @@ def verify_bytes_with_cli(bundle: Bundle, data: bytes, cli: str | Path, timeout:
             snapshot.write_bytes(canonical)
             argv = [str(cli), "verify", "--settings-path", str(bundle.settings), "--vk-path", str(bundle.vk),
                     "--srs-path", str(bundle.srs), "--proof-path", str(snapshot)]
-            return _run(argv, Path(d) / "out.txt", timeout)
+            return _run(argv, timeout)
     except OSError as e:
         return Verdict.ERROR, f"cannot stage proof: {e.strerror or type(e).__name__}"
