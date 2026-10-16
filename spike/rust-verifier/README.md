@@ -6,10 +6,10 @@ Question from the plan: can EZKL's verifier be built as one small program for th
 
 | | EZKL CLI 23.0.5 | `pge_verify` |
 |---|---|---|
-| Size | 36 MB (aarch64 Linux) | 2.1 MB (aarch64 macOS) |
-| Links | glibc | libSystem, libiconv |
+| Size | 36 MB (aarch64 Linux) | 2.1 MB (aarch64 macOS); 2.5 MB (x86_64 Linux, CI) |
+| Links | glibc | libSystem, libiconv (macOS); glibc only (Linux) |
 | Whole-process verify, tiny bundle | 99-103 ms on the Pi | 15.0-17.1 ms on an M4 Pro (n = 20, median 15.3) |
-| Valid / tampered output / tampered input / truncated / garbage | accept / reject / reject / reject / error | exit 0 / 1 / 1 / 1 / 2 |
+| Valid / tampered output / tampered input / truncated / garbage | accept / reject / reject / reject / error | exit 0 / 1 / 1 / 1 / 2 (macOS and Linux CI) |
 | Bytes appended to a valid proof | accepted | accepted (exit 0), same as the CLI |
 
 The two time columns are on different machines, so they aren't comparable; the Pi run is still to do.
