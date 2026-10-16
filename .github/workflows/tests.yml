@@ -13,6 +13,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install "ezkl==23.0.5" onnx numpy pytest
+      - name: fetch the pinned linux cli
+        run: |
+          curl -sSL --fail -o "$RUNNER_TEMP/ezkl.tgz" https://github.com/zkonduit/ezkl/releases/download/v23.0.5/ezkl-linux-gnu.tar.gz
+          echo "311709e04a277c3274923f881926da8bfd33bdbdab167e3d46facb2111f6bdab  $RUNNER_TEMP/ezkl.tgz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/cli"
+          tar -xzf "$RUNNER_TEMP/ezkl.tgz" -C "$RUNNER_TEMP/cli" ezkl
+          echo "PGE_EZKL_CLI=$RUNNER_TEMP/cli/ezkl" >> "$GITHUB_ENV"
       - run: python -m pytest -q -rs
       - name: device checks with the real linux cli
         env:
