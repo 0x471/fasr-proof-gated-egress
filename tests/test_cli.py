@@ -88,7 +88,7 @@ def stub(tmp_path):
         path = tmp_path / f"ezkl_{mode or 'ok'}"
         marker = tmp_path / f"ran_{mode or 'ok'}"
         path.write_text(f"#!{sys.executable}\n" + STUB.format(
-            mode=mode, good=good, marker=str(marker), ts=TS, ok_text=OK, no_text=NO, huge=MAX_OUTPUT_BYTES))
+            mode=mode, good=good, marker=str(marker), ts=TS, ok_text=OK, no_text=NO, huge=70000))
         path.chmod(0o755)
         make.marker = marker
         return path
@@ -149,6 +149,10 @@ def test_misleading_load_errors_are_not_rejections():
                  "[srs] failed to load srs from /x/[halo2].srs"):
         out = f"[*] {TS}, ezkl::execute] - verified: false\n[E] {TS}, ezkl] - {line}\n".encode()
         assert classify_cli(1, out)[0] == Verdict.ERROR
+
+
+def test_output_limit_is_64_kib():
+    assert MAX_OUTPUT_BYTES == 65536
 
 
 def test_negative_exit_code_is_error():

@@ -99,3 +99,8 @@ def test_deadline_kills_the_whole_process_group(tiny_bundle, tmp_path):
             return
         time.sleep(0.1)
     pytest.fail(f"grandchild {pid} survived the deadline")
+
+
+def test_worker_output_limit_is_64_kib():
+    from pge.worker import MAX_OUTPUT_BYTES
+    assert MAX_OUTPUT_BYTES == 65536
