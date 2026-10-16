@@ -79,3 +79,17 @@ def test_scale_only_settings_change_still_verifies(ezkl, tiny_bundle, tmp_path):
     assert verify(ezkl, TINY / "proof.json", forged, tiny_bundle.vk, tiny_bundle.srs)[0] == Verdict.ACCEPT
     _, outs = split_instances(tiny_bundle.spec, json.loads((TINY / "proof.json").read_text())["instances"])
     assert decode_outputs(CircuitSpec.parse(s, "forged"), outs) != decode_outputs(tiny_bundle.spec, outs)
+
+
+def test_trailing_proof_bytes_still_verify(ezkl, tiny_bundle, tiny_proof, tmp_path):
+    # Why the gate pins the proof length: EZKL ignores bytes after the proof.
+    for pad in ([0], [7, 9, 200], [0] * 32):
+        cand = dict(tiny_proof, proof=tiny_proof["proof"] + pad)
+        assert _verify(ezkl, tiny_bundle, cand, tmp_path) == Verdict.ACCEPT
+    assert _verify(ezkl, tiny_bundle, dict(tiny_proof, proof=tiny_proof["proof"][:-32]), tmp_path) == Verdict.REJECT
+
+
+def test_instance_layout_is_enforced_by_ezkl(ezkl, tiny_bundle, tiny_proof, tmp_path):
+    inst = tiny_proof["instances"][0]
+    for bad in ([inst, inst], [inst, []], [inst[:-1]], [inst + [inst[0]]], []):
+        assert _verify(ezkl, tiny_bundle, dict(tiny_proof, instances=bad), tmp_path) == Verdict.REJECT
