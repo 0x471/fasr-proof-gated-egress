@@ -17,7 +17,7 @@ Living document: started in W2, updated after each version and each adversarial-
 | Attacker | Controls | Wants |
 |---|---|---|
 | A1 Compromised AI server | Everything on the server side of the device: outputs, proofs, timing, which requests fail, the TCP connection | Move secret bits to someone outside, through answers that still pass the gate |
-| A2 The served model acting as a rogue agent | The same as A1, from inside the inference stack, and patient. Gigurtsis's loss-of-control matrix lists weight exfiltration (technique 5.4.1) as a step a rogue agent takes, and for closed-weight models a prerequisite for replication | Its own weights out, a few bits at a time |
+| A2 The served model acting as a rogue agent | The same as A1, from inside the inference stack, and patient. Gigurtsis's loss-of-control matrix lists weight exfiltration (technique 5.4.1) as a step a rogue agent takes, and for closed-weight models a prerequisite for replication. In scope: a model that compromises the inference stack or controls timing and failures. Not in scope: secret-bearing content that the approved model itself computes; the gate must release that, since it is a correct answer (see 4.1) | Its own weights out, a few bits at a time |
 | A3 Outside receiver | One or more ordinary client connections | Decode what A1 or A2 hides; probe the device (invalid requests, timing of errors) |
 | A4 Network attacker | Either link, if not physically protected | Inject, drop or reorder frames; impersonate the server or a client |
 | A5 Holder of a signing key (from v2) | An update, boot or model-approval key | Install a device that releases more |
@@ -41,6 +41,8 @@ outside clients (A3)  |  device  |  AI server (A1, A2)
 - The SRS file is the pinned one, and the ceremony behind it was sound. A pin proves byte identity only.
 - The pinned vk and settings were built from an honest, complete circuit for the claimed model, on a build machine that wasn't compromised. The device can check that a proof matches the vk, not that the vk constrains what we think it does.
 - The EZKL CLI binary matches its pinned release digest; that trusts zkonduit's release process.
+- **Complete mediation:** every path from the AI server to the outside crosses the gate. In v0 this is not enforced: the stock OS has SSH, mDNS, Wi-Fi and its own outbound traffic, and nothing stops the server from having another route out. The v1 image (two wired ports, nothing forwarded, no other services) is the first version where this can be claimed, and it has to be tested from both sides.
+- **Logs:** where the log goes and who reads it is not yet defined. If an outsider can read it, the log is an output channel (section 6).
 - The proof binds the encoded request and the outputs (docs/BINDING_SPEC.md), with one pinned model and fixed parameters.
 - Physical access is out of scope (Yogev, 14 Oct): no power, EM, acoustic or thermal channels, no tampering.
 - What ordinary, correct outputs reveal about the model is out of scope (see 4.1).
@@ -58,7 +60,7 @@ For real LLMs, any freedom the proof doesn't pin (sampling seed, temperature, un
 - Verifier: EZKL's official 36 MB CLI (it also contains the prover and setup code), run by `pge/cli.py`.
 - Updates: files copied over SSH.
 
-`device/measure.sh` records the same items for every version, with hashes of the image, config and tools.
+`device/measure.sh` records the same local items for every version (packages, running services, processes, listening sockets, hashes of the boot config and of any files passed to it). A tool that fails makes the run invalid instead of reporting zero. It is a local snapshot only: what is reachable from each port is measured separately, from outside (planned: nmap from the laptop on each interface).
 
 ## 6. Side channels a compromised server controls
 
@@ -68,11 +70,11 @@ Status for v0 in the last column. "Open" means the channel is not closed in this
 |---|---|---|---|
 | Timing | Delay each answer by a chosen amount | Fixed release time with a verification budget (v2) | **Open, shown:** `test_v0_leaks_bits_through_timing` recovers 7 of 7 bits with 0.5 s slots |
 | Ordering | Answer concurrent requests in a chosen order | Release in arrival order (v1); time slots (v2) | Open: answers are released as checks finish |
-| Whether an answer arrives | Fail on purpose: bad proofs, drops, resets, missed deadlines | One generic error; failure threshold and response (v1, v2). With timing fixed, still up to 1 bit per request | Partly: one generic error; failures are counted and `halt_after` can stop the device, off by default |
+| Whether an answer arrives | Fail on purpose: bad proofs, drops, resets, missed deadlines | One generic error; failure threshold and response (v1, v2). With timing fixed, still up to 1 bit per request | Partly: one server-independent error string; failures are counted, and `halt_after` stops all releases (pending ones included), off by default |
 | Sizes and packet metadata | Response length, TCP segmentation, header fields | The device builds every outgoing packet itself; fixed-size responses (v1, v2) | Partly: the device writes its own frames, but their length depends on `y`, and the OS's TCP stack is stock |
 | Answer content | Pick among valid answers or encodings | One pinned model, the device's own encoding, canonical values, `y` decoded from verified values, proof never released | **Closed for the test bundle:** binding and service tests |
 | Verification time | Proofs that are slow to verify or crash the verifier | Fixed proof size; verification budget; separate worker with a deadline | Partly: CLI killed at the deadline (`pge/cli.py`), but answer time still depends on it |
-| Device outputs | Smuggle data into logs, alerts or errors | Logs hold hashes and results only, exported one way; one generic error text | Partly: clients only see two error strings; logs go to stderr and include verifier detail text |
+| Device outputs | Smuggle data into logs, alerts or errors | Logs hold hashes and results only, exported one way; one generic error text | Partly: clients only see two error strings. Logs go to stderr and include the verifier's error text; server-chosen values (stale `seq`, violation messages) are not logged, but the number and timing of log events still follow the server. Who reads the log is undefined |
 | Busy answers | Hold requests open to fill `max_pending`, so other clients get `unavailable` | Fixed slots (v2) | Open: depends on load |
 
 ## 7. Other attacks to test
