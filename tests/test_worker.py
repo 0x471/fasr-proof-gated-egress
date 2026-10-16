@@ -77,3 +77,25 @@ def test_answer_must_be_one_two_string_line(tiny_bundle, out):
 def test_bad_timeout_is_error(tiny_bundle, timeout):
     v, detail = verify_in_worker(tiny_bundle, TINY / "proof.json", timeout, cmd=[sys.executable, "-c", "1/0"])
     assert v == Verdict.ERROR and detail.startswith("bad timeout")
+
+
+def test_huge_output_is_error(tiny_bundle):
+    # One well-formed answer line, just too long: only the size cap can refuse it.
+    code = "import json, sys; print(json.dumps(['accept', 'x' * 70000]))"
+    assert verify_in_worker(tiny_bundle, TINY / "proof.json", 30, cmd=[sys.executable, "-c", code])[0] == Verdict.ERROR
+
+
+def test_deadline_kills_the_whole_process_group(tiny_bundle, tmp_path):
+    import os
+    pidfile = tmp_path / "pid"
+    code = ("import subprocess, sys, time; c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            f"open({str(pidfile)!r}, 'w').write(str(c.pid)); time.sleep(60)")
+    assert verify_in_worker(tiny_bundle, TINY / "proof.json", 2, cmd=[sys.executable, "-c", code])[0] == Verdict.ERROR
+    pid = int(pidfile.read_text())
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    pytest.fail(f"grandchild {pid} survived the deadline")
