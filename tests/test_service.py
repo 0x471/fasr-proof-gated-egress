@@ -1,0 +1,456 @@
+"""The v0 gate against honest and misbehaving servers, over real sockets."""
+import asyncio
+import json
+import os
+import struct
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+import pytest
+
+from conftest import ROOT, TINY, TINY_X
+from pge.binding import split_instances
+from pge.protocol import frame, loads, read_frame
+from pge.service import Gate, Policy, load_domain
+from pge.verdict import Verdict
+
+sys.path.insert(0, str(ROOT / "prover"))
+from server import Server  # noqa: E402
+
+Y = [[0.9666305631399155, 0.0, 0.0]]
+OTHER_X = [[0.6, -0.2, 0.9, 0.1]]
+
+
+class FakeProver:
+    """Answers every request with the pinned tiny proof, which is only valid for TINY_X."""
+
+    def __init__(self, spec):
+        proof = json.loads((TINY / "proof.json").read_text())
+        self.outputs = split_instances(spec, proof["instances"])[1]
+        self.raw = bytes(proof["proof"])
+        self.calls = []
+
+    def prove(self, x):
+        self.calls.append(x)
+        return self.outputs, self.raw
+
+
+def py_verifier(bundle, ezkl):
+    def verify(data, timeout):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "proof.json"
+            p.write_bytes(data)
+            return bundle.verify(ezkl, p)
+    return verify
+
+
+class Client:
+    def __init__(self, reader, writer):
+        self.r, self.w = reader, writer
+
+    def send(self, cid, x):
+        self.w.write(frame(json.dumps({"id": cid, "x": x}).encode()))
+
+    def send_raw(self, payload: bytes):
+        self.w.write(payload)
+
+    async def recv(self, timeout=10.0):
+        data = await asyncio.wait_for(read_frame(self.r, 1 << 16), timeout)
+        return None if data is None else loads(data)
+
+    async def nothing_within(self, seconds):
+        try:
+            data = await asyncio.wait_for(read_frame(self.r, 1 << 16), seconds)
+        except asyncio.TimeoutError:
+            return True
+        return data is None
+
+
+class Stack:
+    def __init__(self, gate, server, tasks, servers):
+        self.gate, self.server, self.tasks, self.servers = gate, server, tasks, servers
+
+    async def client(self):
+        port = self.servers[1].sockets[0].getsockname()[1]
+        return Client(*await asyncio.open_connection("127.0.0.1", port))
+
+    def results(self):
+        return [r["result"] for r in self.records]
+
+
+def run_stack(bundle, verifier, test, *, server=None, policy=Policy(deadline=5), domain=None, link=True):
+    async def go():
+        records = []
+        gate = Gate(spec=bundle.spec, verifier=verifier, domain=domain, policy=policy, log=records.append)
+        srv = server or Server(FakeProver(bundle.spec))
+        s1 = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
+        s2 = await asyncio.start_server(gate.serve_client, "127.0.0.1", 0)
+        tasks = []
+        if link:
+            tasks.append(asyncio.create_task(gate.link("127.0.0.1", s1.sockets[0].getsockname()[1])))
+            for _ in range(200):
+                if gate._server is not None:
+                    break
+                await asyncio.sleep(0.01)
+            assert gate._server is not None
+        st = Stack(gate, srv, tasks, (s1, s2))
+        st.records = records
+        try:
+            return await test(st)
+        finally:
+            for t in tasks:
+                t.cancel()
+            for s in (s1, s2):
+                s.close()
+    return asyncio.run(go())
+
+
+@pytest.fixture()
+def verifier(ezkl, tiny_bundle):
+    return py_verifier(tiny_bundle, ezkl)
+
+
+def server(bundle, mode, **kw):
+    return Server(FakeProver(bundle.spec), mode=mode, **kw)
+
+
+def test_honest_answer_is_released(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": True, "y": Y}
+        assert st.server.requests == [{"seq": 1, "x": [TINY_X]}]
+        assert st.results() == ["accept"]
+    run_stack(tiny_bundle, verifier, t)
+
+
+def test_proof_for_another_request_is_blocked(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, OTHER_X)
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert st.results() == ["reject"]
+    run_stack(tiny_bundle, verifier, t)
+
+
+@pytest.mark.parametrize("mode", ["tamper_output", "garbage", "oversize"])
+def test_bad_answers_are_blocked(tiny_bundle, verifier, mode):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert await c.nothing_within(0.5)
+        want = "reject" if mode == "tamper_output" else "disconnect"
+        assert want in st.results()
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, mode))
+
+
+def test_server_violation_fails_pending_and_reconnects(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is False
+        assert st.results()[:2] == ["server_violation", "disconnect"]
+        for _ in range(300):
+            if st.gate._server is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert st.gate._server is not None
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "garbage"))
+
+
+def test_silent_server_hits_the_deadline(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        start = time.monotonic()
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert 0.9 < time.monotonic() - start < 3
+        assert st.results() == ["deadline"]
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "drop"), policy=Policy(deadline=1))
+
+
+def test_late_answer_is_dropped_and_answered_once(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is False
+        assert await c.nothing_within(1.5)
+        assert st.gate.counts["stale_answer"] == 1
+        assert st.results() == ["deadline", "stale_answer"]
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "delay", delay=1.2), policy=Policy(deadline=0.5))
+
+
+def test_duplicate_answer_gives_one_reply(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is True
+        assert await c.nothing_within(0.5)
+        assert st.gate.counts["duplicate_answer"] + st.gate.counts["stale_answer"] == 1
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "duplicate"))
+
+
+def test_answer_for_unissued_seq_is_dropped(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is False
+        assert st.gate.counts["stale_answer"] == 1 and "deadline" in st.results()
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "wrong_seq"), policy=Policy(deadline=1))
+
+
+def test_replayed_answer_only_passes_for_the_same_request(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is True
+        c.send(2, [TINY_X])
+        assert await c.recv() == {"id": 2, "ok": True, "y": Y}
+        c.send(3, OTHER_X)
+        assert (await c.recv())["ok"] is False
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "replay"))
+
+
+def test_proof_from_another_circuit_is_blocked(tiny_bundle, verifier):
+    class OtherKey(FakeProver):
+        def prove(self, x):
+            other = json.loads((ROOT / "tests" / "fixtures" / "multi" / "proof.json").read_text())
+            return self.outputs, bytes(other["proof"])
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is False
+        assert st.results() == ["reject"]
+    run_stack(tiny_bundle, verifier, t, server=Server(OtherKey(tiny_bundle.spec)))
+
+
+def test_bad_requests_never_reach_the_server(tiny_bundle, verifier):
+    m = json.loads((TINY / "settings.json").read_text())["run_args"]
+    assert (m["decomp_base"], m["decomp_legs"]) == (16384, 2)
+    domain = load_domain(TINY / "domain.json")
+
+    async def t(st):
+        c = await st.client()
+        for cid, x in enumerate(([[0.5, -0.2, 0.9]], [TINY_X, TINY_X], [[1e30, 0, 0, 0]], [[-3.25, 7.0, 1e-6, -0.0]])):
+            c.send(cid, x)
+            assert await c.recv() == {"id": cid, "ok": False, "error": "bad_request"}
+        assert st.server.requests == [] and st.results() == ["bad_request"] * 4
+    run_stack(tiny_bundle, verifier, t, domain=domain)
+
+
+@pytest.mark.parametrize("payload", [
+    frame(b'{"id": 1, "x": [[1, 2, 3, 4]], "id": 2}'),
+    frame(b'{"id": 1, "x": [[1, 2, 3, 4]], "seq": 5}'),
+    frame(b"nope"),
+    struct.pack(">I", 1 << 20),
+    frame(b'{"id": 1, "x": [[NaN, 0, 0, 0]]}'),
+])
+def test_client_violation_closes_the_connection(tiny_bundle, verifier, payload):
+    async def t(st):
+        c = await st.client()
+        c.send_raw(payload)
+        assert await c.recv() is None
+        assert st.results() == ["client_violation"] and st.server.requests == []
+    run_stack(tiny_bundle, verifier, t)
+
+
+def test_ids_must_increase(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(5, [TINY_X])
+        assert (await c.recv())["id"] == 5
+        c.send(5, [TINY_X])
+        assert await c.recv() is None
+        assert "client_violation" in st.results() and len(st.server.requests) == 1
+    run_stack(tiny_bundle, verifier, t)
+
+
+def test_halt_after_failures(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        for cid in (1, 2):
+            c.send(cid, [TINY_X])
+            assert (await c.recv())["ok"] is False
+        assert st.gate.halted
+        c.send(3, [TINY_X])
+        assert await c.recv(timeout=0.3) == {"id": 3, "ok": False, "error": "unavailable"}
+        assert len(st.server.requests) == 2
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "drop"),
+              policy=Policy(deadline=0.3, halt_after=2))
+
+
+def test_too_many_pending_is_unavailable(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        c.send(2, [TINY_X])
+        assert await c.recv(timeout=0.5) == {"id": 2, "ok": False, "error": "unavailable"}
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert st.results() == ["busy", "deadline"] and not st.gate.halted
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "drop"),
+              policy=Policy(deadline=1, max_pending=1, halt_after=2))
+
+
+def test_no_server_is_unavailable(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert st.results() == ["no_server"]
+    run_stack(tiny_bundle, verifier, t, link=False)
+
+
+def test_each_request_answered_exactly_once(tiny_bundle, verifier):
+    async def t(st):
+        a, b = await st.client(), await st.client()
+        for cid in range(5):
+            a.send(cid, [TINY_X])
+            b.send(cid, OTHER_X)
+        got_a = [await a.recv() for _ in range(5)]
+        got_b = [await b.recv() for _ in range(5)]
+        assert sorted(m["id"] for m in got_a) == list(range(5)) and all(m["ok"] for m in got_a)
+        assert sorted(m["id"] for m in got_b) == list(range(5)) and not any(m["ok"] for m in got_b)
+        assert await a.nothing_within(0.3) and await b.nothing_within(0.1)
+        assert [r["seq"] for r in st.server.requests] == list(range(1, 11))
+    run_stack(tiny_bundle, verifier, t)
+
+
+def test_verifier_crash_is_unavailable(tiny_bundle):
+    def boom(data, timeout):
+        raise RuntimeError("native crash stand-in")
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert st.results() == ["error"]
+    run_stack(tiny_bundle, boom, t)
+
+
+def test_check_finishing_after_the_deadline_is_dropped(tiny_bundle):
+    def slow(data, timeout):
+        time.sleep(1.0)
+        return Verdict.ACCEPT, ""
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert await c.nothing_within(1.5)
+        assert st.results() == ["deadline"] and st.gate.counts["late_check"] == 1
+    run_stack(tiny_bundle, slow, t, policy=Policy(deadline=0.3))
+
+
+def test_v0_leaks_bits_through_timing(tiny_bundle, verifier):
+    # The baseline releases as soon as a check passes, so the server's delays reach the client.
+    bits = "1011001"
+
+    async def t(st):
+        c = await st.client()
+        seen = ""
+        for cid in range(len(bits)):
+            start = time.monotonic()
+            c.send(cid, [TINY_X])
+            assert (await c.recv())["ok"] is True
+            seen += "1" if time.monotonic() - start > 0.25 else "0"
+        assert seen == bits
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "timing_bits", bits=bits, slot=0.5))
+
+
+def test_real_prover_end_to_end(ezkl, tiny_bundle, verifier, srs_path):
+    from server import Prover
+
+    prover = Prover(srs_path)
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert await c.recv(timeout=60) == {"id": 1, "ok": True, "y": Y}
+        c.send(2, [[0.1, 0.2, 0.3, 0.4]])
+        m = await c.recv(timeout=60)
+        assert m["ok"] is True and m["id"] == 2
+    run_stack(tiny_bundle, verifier, t, server=Server(prover), policy=Policy(deadline=60))
+
+
+def test_cli_verifier_in_the_gate(real_cli_path, tiny_bundle):
+    from pge.cli import verify_bytes_with_cli
+
+    def verifier(data, timeout):
+        return verify_bytes_with_cli(tiny_bundle, data, real_cli_path, timeout)
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert await c.recv(timeout=30) == {"id": 1, "ok": True, "y": Y}
+        c.send(2, OTHER_X)
+        assert (await c.recv(timeout=30))["ok"] is False
+        assert st.results() == ["accept", "reject"]
+    run_stack(tiny_bundle, verifier, t, policy=Policy(deadline=30))
+
+
+def test_service_main_with_the_real_cli(real_cli_path, tiny_bundle, srs_path, tmp_path):
+    import shutil
+    import socket
+    import subprocess
+
+    for name in ("settings.json", "vk.key"):
+        shutil.copy(TINY / name, tmp_path / name)
+    shutil.copy(srs_path, tmp_path / "kzg.srs")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    async def go():
+        srv = Server(FakeProver(tiny_bundle.spec))
+        s1 = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
+        sport = s1.sockets[0].getsockname()[1]
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(ROOT)!r}); from pge.service import main; main()",
+            "--listen", f"127.0.0.1:{port}",
+            "--server", f"127.0.0.1:{sport}", "--bundle", str(tmp_path), "--pins", str(ROOT / "device" / "tiny.sha256"),
+            "--cli", str(real_cli_path), "--domain", str(TINY / "domain.json"), "--deadline", "30",
+            cwd=str(ROOT), stderr=asyncio.subprocess.PIPE)
+        try:
+            for _ in range(200):
+                try:
+                    c = Client(*await asyncio.open_connection("127.0.0.1", port))
+                    break
+                except OSError:
+                    await asyncio.sleep(0.05)
+            else:
+                pytest.fail("service did not start")
+            # The first requests may arrive before the service has connected to the server.
+            for cid in range(50):
+                c.send(cid, [TINY_X])
+                m = await c.recv(timeout=30)
+                if srv.requests:
+                    break
+                assert m == {"id": cid, "ok": False, "error": "unavailable"}
+                await asyncio.sleep(0.1)
+            assert m == {"id": cid, "ok": True, "y": Y}
+            c.send(cid + 1, [[-3.25, 7.0, 1e-6, -0.0]])
+            assert await c.recv() == {"id": cid + 1, "ok": False, "error": "bad_request"}
+        finally:
+            proc.kill()
+            await proc.wait()
+            s1.close()
+    asyncio.run(go())
+
+
+@pytest.fixture()
+def real_cli_path():
+    from conftest import REQUIRE
+    path = os.environ.get("PGE_EZKL_CLI")
+    if not path or not Path(path).is_file():
+        if REQUIRE:
+            pytest.fail("PGE_EZKL_CLI not set")
+        pytest.skip("set PGE_EZKL_CLI to EZKL's 23.0.5 CLI binary")
+    return Path(path)
+
+
+def test_verdict_values_match_log_results():
+    assert {v.value for v in Verdict} == {"accept", "reject", "error"}
