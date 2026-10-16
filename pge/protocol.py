@@ -52,21 +52,30 @@ def frame(payload: bytes) -> bytes:
     return struct.pack(">I", len(payload)) + payload
 
 
-async def read_frame(reader: asyncio.StreamReader, limit: int) -> bytes | None:
-    """Return the next payload, None on a clean end of stream, or raise ProtocolError."""
+async def read_frame(reader: asyncio.StreamReader, limit: int, body_timeout: float | None = None) -> bytes | None:
+    """Return the next payload, None on a clean end of stream, or raise ProtocolError.
+
+    body_timeout bounds how long a started frame may take to arrive in full.
+    """
     try:
-        head = await reader.readexactly(4)
+        first = await reader.readexactly(1)
+    except asyncio.IncompleteReadError:
+        return None
+    try:
+        head = first + await asyncio.wait_for(reader.readexactly(3), body_timeout)
     except asyncio.IncompleteReadError as e:
-        if not e.partial:
-            return None
         raise ProtocolError("truncated frame header") from e
+    except asyncio.TimeoutError as e:
+        raise ProtocolError("frame not completed in time") from e
     n = struct.unpack(">I", head)[0]
     if not 0 < n <= limit:
         raise ProtocolError(f"frame length {n} outside 1..{limit}")
     try:
-        return await reader.readexactly(n)
+        return await asyncio.wait_for(reader.readexactly(n), body_timeout)
     except asyncio.IncompleteReadError as e:
         raise ProtocolError("truncated frame") from e
+    except asyncio.TimeoutError as e:
+        raise ProtocolError("frame not completed in time") from e
 
 
 def _keys(obj, keys: tuple[str, ...], what: str) -> None:
