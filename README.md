@@ -76,6 +76,7 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `tests/` | Unit tests, differential tests against EZKL's own encoding and witness generation, end-to-end verification |
 | `tests/fixtures/` | Two pinned bundles: `tiny` (y = ReLU(xW + b), 4 to 3, with its input domain in `domain.json`) and `multi` (two inputs, two outputs, scales 13 and 26) |
 | `prover/` | Build and prove the test circuits with EZKL; tamper checks; `server.py`, the laptop AI server, honest or misbehaving |
+| `observer/client.py` | The outside observer: sends requests to the gate and records each answer with its time (for the side-channel experiments) |
 | `device/verify_on_pi.sh` | Stage the pinned tiny bundle and run the device checks on the Pi over SSH, or locally on Linux with `HOST=local` |
 | `device/check_verifier.sh` | The device checks: fetch the pinned EZKL CLI, check accept and reject cases, time verification |
 | `device/measure.sh` | Attack-surface snapshot for every version: packages, running services, processes, listening sockets, hashes of config and tools |
