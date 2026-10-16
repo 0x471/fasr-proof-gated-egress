@@ -87,3 +87,18 @@ def test_only_two_error_strings():
     assert loads(client_error(3, "unavailable")) == {"id": 3, "ok": False, "error": "unavailable"}
     with pytest.raises(ValueError):
         client_error(3, "rejected: [halo2] constraint system not satisfied")
+
+
+@pytest.mark.parametrize("seq", ["true", "1.0", "-1", "9007199254740992", '"1"', "null", "[1]", "{}"])
+def test_bad_server_seq(seq):
+    with pytest.raises(ProtocolError):
+        parse_server(('{"seq": %s, "outputs": [["%s"]], "proof": "00"}' % (seq, FELT)).encode())
+
+
+def test_frame_must_complete_in_time():
+    async def go():
+        r = asyncio.StreamReader()
+        r.feed_data(b"\x00\x00\x00\x05ab")
+        return await read_frame(r, 100, body_timeout=0.2)
+    with pytest.raises(ProtocolError):
+        asyncio.run(go())
