@@ -45,7 +45,7 @@ A frame over the limit, an empty frame, invalid UTF-8 or invalid JSON is a proto
 
 1. The device parses the client frame and checks `x` against the pinned bundle: tensor count and lengths, encoding (`pge/binding.py`) and, if the bundle has one, the input domain (`pge/domain.py`). Any failure is answered `bad_request` and nothing is forwarded. This answer depends only on `x`, so it reveals nothing about the server.
 2. Otherwise the device assigns the next `seq`, records the request as pending with a deadline, and forwards `{"seq", "x"}`.
-3. The **first** server message for a pending `seq` is final. The device builds the instances from its own `x` and the server's `outputs`, verifies, and removes the `seq` from the pending table before answering:
+3. The **first** server message for a pending `seq` is final. The device checks the proof has exactly the pinned length (`--proof-bytes`; EZKL itself accepts bytes appended to a valid proof), builds the instances from its own `x` and the server's `outputs`, verifies, and removes the `seq` from the pending table before answering:
    - ACCEPT: answer `ok: true` with `y` decoded from the verified output instances at their pinned scales;
    - REJECT or ERROR: answer `unavailable`.
 4. If the deadline passes first, the request is removed and answered `unavailable`. A check still running is left to finish (the verifier has its own deadline) and its result is dropped.

@@ -100,7 +100,7 @@ On the laptop, start the AI server, then the gate (with EZKL's CLI on Linux):
 .venv/bin/python prover/server.py --listen 127.0.0.1:8701
 python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main; main()' \
   --listen 0.0.0.0:8700 --server 127.0.0.1:8701 --bundle BUNDLE_DIR --pins device/tiny.sha256 \
-  --cli ./ezkl --domain tests/fixtures/tiny/domain.json
+  --cli ./ezkl --domain tests/fixtures/tiny/domain.json --proof-bytes 3072
 ```
 
 `BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. `prover/server.py --mode` makes the server misbehave (see its docstring). Not yet run on the Pi.
