@@ -39,9 +39,17 @@ outside clients (A3)  |  device  |  AI server (A1, A2)
 
 - The proof system is sound and EZKL 23.0.5's verifier implements it correctly. Not tested here; checked by others.
 - The SRS file is the pinned one, and the ceremony behind it was sound. A pin proves byte identity only.
+- The pinned vk and settings were built from an honest, complete circuit for the claimed model, on a build machine that wasn't compromised. The device can check that a proof matches the vk, not that the vk constrains what we think it does.
+- The EZKL CLI binary matches its pinned release digest; that trusts zkonduit's release process.
 - The proof binds the encoded request and the outputs (docs/BINDING_SPEC.md), with one pinned model and fixed parameters.
 - Physical access is out of scope (Yogev, 14 Oct): no power, EM, acoustic or thermal channels, no tampering.
-- What ordinary, correct outputs reveal about the model is out of scope.
+- What ordinary, correct outputs reveal about the model is out of scope (see 4.1).
+
+### 4.1 Extraction through correct answers: out of scope, to confirm
+
+A proof shows that `y` came from the pinned model on this `x`. It does nothing against an attacker who learns the model from many correct answers. For the tiny affine + ReLU test model, a handful of chosen requests that keep the ReLUs active can recover the quantised weights by linear algebra, and every proof verifies. The plan puts this out of scope; it is on the agenda for the mentor call (20 Oct) to confirm, or to add a gate policy such as query-rate limits.
+
+For real LLMs, any freedom the proof doesn't pin (sampling seed, temperature, unproven layers) becomes a channel with valid proofs. The test model is deterministic; who chooses the seed is an open question for the mentor.
 
 ## 5. v0 attack surface (measured on the Pi, 11 and 13 Oct)
 
@@ -72,7 +80,11 @@ Status for v0 in the last column. "Open" means the channel is not closed in this
 | Attack | Target | Current coverage |
 |---|---|---|
 | Replay an old answer | Pending table | One answer per `seq`; tested (`test_late_answer_is_dropped_and_answered_once`, `test_replayed_answer_only_passes_for_the_same_request`) |
-| Proof for another request or model | Binding | Tested: other request, other circuit, tampered output |
+| Proof for another request or model | Binding | Tested: other request, other circuit, tampered output; EZKL also refuses wrong instance layouts (`test_instance_layout_is_enforced_by_ezkl`) |
+| Bytes appended to a valid proof | Proof format | EZKL accepts them (`test_trailing_proof_bytes_still_verify`), so the gate pins the exact proof length (`Policy.proof_bytes`); tested |
+| Inject, replay or reorder frames on either link | Links (A4) | No transport security in v0; replay is limited to one answer per `seq` |
+| A substituted verifier binary that accepts everything | Supply chain | Digest pin on download; v1 bakes the binary into the image |
+| Make the device unreliable until operators bypass it | Availability | Failures are logged and counted; nothing yet makes a bypass visible |
 | Malformed or oversized frames | Parser | Strict framing and parsing, tested; fuzzing planned for v1 |
 | Exploit the verifier or the network stack | Device software | Not addressed in v0 (stock OS, 36 MB CLI); v1 minimal image |
 | Swap the bundle on disk | Bundle | Pins checked at load and before every check; same-user swap between check and use still possible |
