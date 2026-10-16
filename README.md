@@ -67,6 +67,7 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `pge/domain.py` | Input domain of an affine + ReLU circuit, so impossible requests are refused up front |
 | `pge/verdict.py` | Turn a verify call into ACCEPT, REJECT or ERROR |
 | `pge/worker.py` | Run one verify in a child process with a deadline |
+| `pge/cli.py` | Verify with EZKL's official CLI (no Python package exists for Pi OS), with a deadline on its whole process group |
 | `docs/BINDING_SPEC.md` | The binding rules, pitfalls and test vectors |
 | `tests/` | Unit tests, differential tests against EZKL's own encoding and witness generation, end-to-end verification |
 | `tests/fixtures/` | Two pinned bundles: `tiny` (y = ReLU(xW + b), 4 to 3) and `multi` (two inputs, two outputs, scales 13 and 26) |
@@ -84,7 +85,7 @@ uv pip install --python .venv/bin/python "ezkl==23.0.5" onnx numpy pytest
 
 The verification tests need the pinned SRS. They use `prover/artifacts/kzg.srs` or `$PGE_SRS` if present and otherwise download it with EZKL's `get_srs`, then check the pin. CI sets `PGE_REQUIRE_INTEGRATION=1`, so a missing SRS or EZKL fails the run instead of skipping those tests.
 
-`tests/test_device_script.py` runs the device checks against a stub CLI and only runs on Linux. CI also runs `device/verify_on_pi.sh` with `HOST=local` and EZKL's x86_64 Linux CLI.
+`tests/test_cli.py` runs `pge/cli.py` against stub CLIs, and against the real CLI when `PGE_EZKL_CLI` points to it (CI does this). `tests/test_device_script.py` runs the device checks against a stub CLI and only runs on Linux. CI also runs `device/verify_on_pi.sh` with `HOST=local` and EZKL's x86_64 Linux CLI.
 
 ## Measured so far
 
