@@ -32,6 +32,8 @@ class Policy:
     deadline: float = 10.0
     max_pending: int = 32
     halt_after: int | None = None
+    # EZKL accepts a valid proof with bytes appended, so the length must be pinned to stop the server choosing it.
+    proof_bytes: int | None = None
 
 
 @dataclass
@@ -136,6 +138,8 @@ class Gate:
 
     async def _check(self, p: _Pending, outputs: list, proof: bytes) -> None:
         try:
+            if self.policy.proof_bytes is not None and len(proof) != self.policy.proof_bytes:
+                raise BindingError(f"proof is {len(proof)} bytes, expected {self.policy.proof_bytes}")
             instances = build_instances(self.spec, p.x, outputs)
             y = decode_outputs(self.spec, outputs)
         except BindingError as e:
@@ -262,6 +266,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--deadline", type=float, default=10.0)
     ap.add_argument("--max-pending", type=int, default=32)
     ap.add_argument("--halt-after", type=int)
+    ap.add_argument("--proof-bytes", type=int, required=True, help="exact raw proof length (3072 for the test bundles)")
     a = ap.parse_args(argv)
 
     sums = {}
@@ -273,7 +278,8 @@ def main(argv: list[str] | None = None) -> None:
     bundle = Bundle.load(d / "settings.json", d / "vk.key", d / "kzg.srs", pins)
     gate = Gate(spec=bundle.spec, verifier=lambda data, t: verify_bytes_with_cli(bundle, data, a.cli, t),
                 domain=load_domain(a.domain) if a.domain else None,
-                policy=Policy(deadline=a.deadline, max_pending=a.max_pending, halt_after=a.halt_after))
+                policy=Policy(deadline=a.deadline, max_pending=a.max_pending, halt_after=a.halt_after,
+                              proof_bytes=a.proof_bytes))
 
     async def run() -> None:
         host, port = _addr(a.listen)
