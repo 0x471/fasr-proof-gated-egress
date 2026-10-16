@@ -103,7 +103,7 @@ python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main
   --cli ./ezkl --domain tests/fixtures/tiny/domain.json --proof-bytes 3072
 ```
 
-`OUTSIDE_IP` is the outside interface's own address; don't use `0.0.0.0`, which listens on every interface. `BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. `prover/server.py --mode` makes the server misbehave (see its docstring). Not yet run on the Pi.
+`OUTSIDE_IP` is the outside interface's own address; don't use `0.0.0.0`, which listens on every interface. `BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. `prover/server.py --mode` makes the server misbehave (see its docstring). Run on the Pi on 16 Oct (below).
 
 ## Measured so far
 
@@ -111,11 +111,16 @@ python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main
 |---|---|---|
 | Prove / verify, tiny circuit, in-process | laptop (M4 Pro) | about 0.5 to 0.8 s / 8 to 14 ms |
 | Verify, whole CLI process, n = 20 | Raspberry Pi 4 (13 Oct, earlier script) | 99 to 103 ms |
+| Verify, whole CLI process, n = 20 | Raspberry Pi 4 (16 Oct, current `device/verify_on_pi.sh`) | 101 to 106 ms, median 103 |
+| Gate on the Pi, prover on the laptop, one request | Pi 4 + M4 Pro over Ethernet | 0.9 to 1.05 s per answer (mostly proving); y matches the float model within quantisation |
+| Misbehaving server against the gate on the Pi | tamper, replay, duplicate, wrong seq, garbage, oversize | blocked or dropped as specified |
+| Timing leak through v0 (16 bits, 1 s slots) | Pi gate | 16 of 16 bits decoded from answer times; honest answers vary by 81 ms |
+| Open TCP ports seen from the laptop (nmap) | Pi, v0 | 22 (ssh), 8700 (gate) |
 | Raw proof size | | 3072 bytes |
 | Tampered input, output and proof bytes | laptop | rejected |
 | Tampered input, output, garbage file | Raspberry Pi | rejected (non-zero exit) |
 
-The current device checks pass with the real aarch64 CLI in a Debian 13 container and with the x86_64 CLI in CI, and fail as expected against a stub CLI. They have not been re-run on the Pi yet.
+The current device checks pass with the real aarch64 CLI in a Debian 13 container and with the x86_64 CLI in CI, and fail as expected against a stub CLI. On 16 Oct they passed on the Pi as well.
 
 ## Scope
 
