@@ -6,7 +6,7 @@ Everything here is for EZKL 23.0.5 and the pinned test bundles. It is not a gene
 
 ## 1. The bundle is pinned
 
-Required of the device service (not built yet): it picks the single bundle for each request (settings, verification key, SRS) and refuses to start if any file's sha256 differs from its pin. The server never chooses between bundles: picking between two valid models with different outputs would let it choose the output. `Bundle.load` implements the check.
+Required of the device service (`pge/service.py` serves exactly one bundle): it picks the single bundle for each request (settings, verification key, SRS) and refuses to start if any file's sha256 differs from its pin. The server never chooses between bundles: picking between two valid models with different outputs would let it choose the output. `Bundle.load` implements the check.
 
 | Bundle | File | sha256 |
 |---|---|---|
