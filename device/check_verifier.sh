@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs on the device, inside a run directory holding proof.json, settings.json, vk.key, kzg.srs
-# and the pge package (for the proof shape check).
+# and the pge package (proof shape check and verdict rules).
 # Fetches the pinned EZKL CLI, checks accept and reject cases, then times verification.
 # Args: run_dir cache_base ezkl_version archive archive_sha256 runs timeout_s pins
 # Needs GNU coreutils (timeout, sha256sum, date +%N) and python3.
@@ -67,21 +67,20 @@ run_verify() {
   set -e
 }
 
-# The CLI logs "[E] [time, ezkl] - <error>" and, only when verification itself ran,
-# "[*] [time, ezkl::execute] - verified: true|false". REJECT needs a [halo2] error after
-# "verified: false"; anything else, including load errors and signals, is ERROR.
+# One classifier for the gate and this script: pge.cli.classify_cli (exit code, anchored
+# log lines, exactly one "verified" line, at most 64 KiB of output).
 classify() {
-  local out err
-  out="$(head -c 65536 verify_out.txt)"
-  err="$(sed -n 's/^\[E\] \[[^]]*, ezkl\] - //p' <<<"$out")"
-  if [ "$RC" -eq 0 ] && [ -z "$err" ] && grep -qx '\[\*\] \[[^]]*, ezkl::execute\] - verified: true' <<<"$out"; then
-    echo ACCEPT
-  elif [ "$RC" -eq 1 ] && [ -n "$err" ] && [[ "$err" != *$'\n'* ]] && [[ "$err" == "[halo2] "* ]] &&
-      grep -qx '\[\*\] \[[^]]*, ezkl::execute\] - verified: false' <<<"$out"; then
-    echo REJECT
-  else
-    echo "ERROR(rc=$RC)"
-  fi
+  python3 -I - "$RC" verify_out.txt <<'PY'
+import os
+import sys
+sys.path.insert(0, os.getcwd())
+from pge.cli import classify_cli
+rc = int(sys.argv[1])
+with open(sys.argv[2], "rb") as f:
+    out = f.read(65537)
+verdict, _ = classify_cli(rc, out)
+print(f"ERROR(rc={rc})" if verdict.name == "ERROR" else verdict.name)
+PY
 }
 
 fail=0

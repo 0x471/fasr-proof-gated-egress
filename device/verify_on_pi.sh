@@ -30,7 +30,7 @@ trap 'rm -rf "$STAGE"' EXIT
 cp "$ART"/{proof.json,settings.json,vk.key} "$STAGE"/
 cp "$SRS" "$STAGE/kzg.srs"
 mkdir "$STAGE/pge"
-cp "$ROOT"/pge/{__init__,binding,verdict}.py "$STAGE/pge"/
+cp "$ROOT"/pge/{__init__,binding,bundle,cli,proc,verdict}.py "$STAGE/pge"/
 echo "== pinned inputs (local)"
 if command -v sha256sum >/dev/null; then SUM=(sha256sum); else SUM=(shasum -a 256); fi
 (cd "$STAGE" && "${SUM[@]}" -c - <<<"$PINS")
