@@ -228,6 +228,19 @@ def test_proof_from_another_circuit_is_blocked(tiny_bundle, verifier):
     run_stack(tiny_bundle, verifier, t, server=Server(OtherKey(tiny_bundle.spec)))
 
 
+def test_padded_proof_is_blocked_when_the_length_is_pinned(tiny_bundle, verifier):
+    class Padded(FakeProver):
+        def prove(self, x):
+            return self.outputs, self.raw + b"\x00"
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is False
+        assert st.results() == ["reject"]
+    run_stack(tiny_bundle, verifier, t, server=Server(Padded(tiny_bundle.spec)), policy=Policy(deadline=5, proof_bytes=3072))
+
+
 def test_bad_requests_never_reach_the_server(tiny_bundle, verifier):
     m = json.loads((TINY / "settings.json").read_text())["run_args"]
     assert (m["decomp_base"], m["decomp_legs"]) == (16384, 2)
@@ -412,7 +425,7 @@ def test_service_main_with_the_real_cli(real_cli_path, tiny_bundle, srs_path, tm
             sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(ROOT)!r}); from pge.service import main; main()",
             "--listen", f"127.0.0.1:{port}",
             "--server", f"127.0.0.1:{sport}", "--bundle", str(tmp_path), "--pins", str(ROOT / "device" / "tiny.sha256"),
-            "--cli", str(real_cli_path), "--domain", str(TINY / "domain.json"), "--deadline", "30",
+            "--cli", str(real_cli_path), "--domain", str(TINY / "domain.json"), "--deadline", "30", "--proof-bytes", "3072",
             cwd=str(ROOT), stderr=asyncio.subprocess.PIPE)
         try:
             for _ in range(200):
