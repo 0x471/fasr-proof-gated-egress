@@ -73,6 +73,7 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `docs/BINDING_SPEC.md` | The binding rules, pitfalls and test vectors |
 | `docs/SERVICE_SPEC.md` | The v0 service: messages, request lifecycle, failure policy, replay |
 | `docs/THREAT_MODEL.md` | Threat model v0: assets, attackers, assumptions, the v0 attack surface, side channels and their status |
+| `docs/ATTACKS.md` | Known-attacks catalogue: every attack tried, its result and the test that covers it |
 | `tests/` | Unit tests, differential tests against EZKL's own encoding and witness generation, end-to-end verification |
 | `tests/fixtures/` | Two pinned bundles: `tiny` (y = ReLU(xW + b), 4 to 3, with its input domain in `domain.json`) and `multi` (two inputs, two outputs, scales 13 and 26) |
 | `prover/` | Build and prove the test circuits with EZKL; tamper checks; `server.py`, the laptop AI server, honest or misbehaving |
