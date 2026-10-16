@@ -467,3 +467,202 @@ def real_cli_path():
 
 def test_verdict_values_match_log_results():
     assert {v.value for v in Verdict} == {"accept", "reject", "error"}
+
+
+# Regression tests from the 16 Oct review.
+
+def test_broken_log_still_answers(tiny_bundle, verifier):
+    def bad_log(rec):
+        raise OSError(28, "No space left on device")
+
+    async def go():
+        gate = Gate(spec=tiny_bundle.spec, verifier=verifier, log=bad_log, policy=Policy(deadline=5))
+        srv = Server(FakeProver(tiny_bundle.spec))
+        s1 = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
+        s2 = await asyncio.start_server(gate.serve_client, "127.0.0.1", 0)
+        link = asyncio.create_task(gate.link("127.0.0.1", s1.sockets[0].getsockname()[1]))
+        while gate._server is None:
+            await asyncio.sleep(0.01)
+        c = Client(*await asyncio.open_connection("127.0.0.1", s2.sockets[0].getsockname()[1]))
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": True, "y": Y}
+        c.send(2, OTHER_X)
+        assert await c.recv() == {"id": 2, "ok": False, "error": "unavailable"}
+        assert gate.counts["log_error"] >= 2 and not gate.pending
+        link.cancel()
+        s1.close()
+        s2.close()
+    asyncio.run(go())
+
+
+def test_overdue_result_is_not_released_when_the_timer_is_late(tiny_bundle):
+    def slow_accept(data, timeout):
+        time.sleep(0.5)
+        return Verdict.ACCEPT, ""
+
+    async def t(st):
+        st.gate._expire = lambda seq: None  # stands in for a deadline timer that runs late
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert st.results() == ["deadline"]
+    run_stack(tiny_bundle, slow_accept, t, policy=Policy(deadline=0.2))
+
+
+def test_half_closed_client_still_gets_its_answers(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        c.send(2, OTHER_X)
+        c.w.write_eof()
+        got = [await c.recv(), await c.recv()]
+        assert got == [{"id": 1, "ok": True, "y": Y}, {"id": 2, "ok": False, "error": "unavailable"}]
+        assert await c.recv() is None
+    run_stack(tiny_bundle, verifier, t)
+
+
+def test_unissued_seq_is_not_logged(tiny_bundle, verifier):
+    async def go():
+        records = []
+        gate = Gate(spec=tiny_bundle.spec, verifier=verifier, log=records.append)
+        gate.on_answer(1234567890123456, [], b"x")
+        assert records == [{"result": "stale_answer"}] and gate.counts["stale_answer"] == 1
+    asyncio.run(go())
+
+
+def test_server_violation_detail_is_fixed_text(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is False
+        assert [r for r in st.records if r["result"] == "server_violation"] == [
+            {"result": "server_violation", "detail": "malformed frame or answer"}]
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "oversize"))
+
+
+@pytest.mark.parametrize("kw", [
+    {"deadline": float("inf")}, {"deadline": float("nan")}, {"deadline": 0}, {"deadline": -1}, {"deadline": True},
+    {"max_pending": 0}, {"max_pending": 1.5}, {"halt_after": 0}, {"proof_bytes": 0}, {"proof_bytes": 1 << 21},
+    {"max_clients": 0}, {"idle": 0},
+])
+def test_bad_policy_is_refused(kw):
+    with pytest.raises(ValueError):
+        Policy(**kw)
+
+
+def test_expired_request_waiting_for_the_lock_is_never_verified(tiny_bundle):
+    calls = []
+
+    def slow(data, timeout):
+        calls.append(timeout)
+        time.sleep(0.6)
+        return Verdict.REJECT, "first"
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        c.send(2, [TINY_X])
+        got = sorted([(await c.recv())["id"], (await c.recv())["id"]])
+        assert got == [1, 2]
+        await asyncio.sleep(0.3)
+        assert len(calls) == 1
+    run_stack(tiny_bundle, slow, t, policy=Policy(deadline=0.4))
+
+
+def test_verifier_budget_is_the_remaining_time(tiny_bundle):
+    budgets = []
+
+    def slow(data, timeout):
+        budgets.append(timeout)
+        time.sleep(0.3)
+        return Verdict.ACCEPT, ""
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        c.send(2, [TINY_X])
+        assert [(await c.recv())["ok"], (await c.recv())["ok"]] == [True, True]
+        assert budgets[0] <= 2.0 and budgets[1] < budgets[0] - 0.2
+    run_stack(tiny_bundle, slow, t, policy=Policy(deadline=2))
+
+
+def test_failures_are_cumulative(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        for cid, x, ok in ((1, OTHER_X, False), (2, [TINY_X], True), (3, OTHER_X, False)):
+            c.send(cid, x)
+            assert (await c.recv())["ok"] is ok
+        assert st.gate.halted
+    run_stack(tiny_bundle, verifier, t, policy=Policy(deadline=5, halt_after=2))
+
+
+def test_halt_answers_pending_requests_at_once(tiny_bundle):
+    state = {"n": 0}
+
+    def verify(data, timeout):
+        state["n"] += 1
+        time.sleep(0.2 if state["n"] == 1 else 1.5)
+        return (Verdict.REJECT, "first") if state["n"] == 1 else (Verdict.ACCEPT, "")
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, OTHER_X)
+        c.send(2, [TINY_X])
+        first = await c.recv()
+        start = time.monotonic()
+        second = await c.recv()
+        assert first == {"id": 1, "ok": False, "error": "unavailable"}
+        assert second == {"id": 2, "ok": False, "error": "unavailable"} and time.monotonic() - start < 0.5
+        assert st.gate.halted and "accept" not in st.results() and "halted" in st.results()
+    run_stack(tiny_bundle, verify, t, policy=Policy(deadline=5, halt_after=1))
+
+
+def test_idle_client_is_closed(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        assert await c.recv(timeout=5) is None
+        c2 = await st.client()
+        c2.send_raw(b"\x00\x00")
+        assert await c2.recv(timeout=5) is None
+        assert st.results() == ["client_idle", "client_idle"]
+    run_stack(tiny_bundle, verifier, t, policy=Policy(deadline=5, idle=0.3))
+
+
+def test_too_many_clients_are_refused(tiny_bundle, verifier):
+    async def t(st):
+        a = await st.client()
+        a.send(1, [TINY_X])
+        assert (await a.recv())["ok"] is True
+        b = await st.client()
+        assert await b.recv(timeout=5) is None
+        assert "client_refused" in st.results()
+    run_stack(tiny_bundle, verifier, t, policy=Policy(deadline=5, max_clients=1))
+
+
+def test_stalled_server_frame_is_a_violation(tiny_bundle, verifier):
+    class Stall(Server):
+        async def _send(self, writer, seq, outputs, proof):
+            writer.write(b"\x00\x00\x10\x00{")
+            await writer.drain()
+
+    async def t(st):
+        c = await st.client()
+        start = time.monotonic()
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert time.monotonic() - start < 3
+        for _ in range(100):
+            if "server_violation" in st.results():
+                break
+            await asyncio.sleep(0.02)
+        assert "server_violation" in st.results()
+    run_stack(tiny_bundle, verifier, t, server=Stall(FakeProver(tiny_bundle.spec)), policy=Policy(deadline=1))
+
+
+def test_bad_verifier_result_is_unavailable(tiny_bundle):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
+        assert st.results() == ["error"]
+    run_stack(tiny_bundle, lambda data, timeout: ("accept", ""), t)
