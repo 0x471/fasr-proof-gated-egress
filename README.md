@@ -68,7 +68,7 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `pge/verdict.py` | Turn a verify call into ACCEPT, REJECT or ERROR |
 | `pge/worker.py` | Run one verify in a child process with a deadline |
 | `pge/protocol.py` | The service's wire format: length-prefixed JSON frames, strict parsing |
-| `pge/service.py` | The v0 gate service: one bundle, one answer per request, the decoded output or one generic error |
+| `pge/service.py` | The v0 gate service: one bundle, at most one answer per request, the decoded output or an error that never carries server-chosen text |
 | `pge/cli.py` | Verify with EZKL's official CLI (no Python package exists for Pi OS), with a deadline on its whole process group |
 | `docs/BINDING_SPEC.md` | The binding rules, pitfalls and test vectors |
 | `docs/SERVICE_SPEC.md` | The v0 service: messages, request lifecycle, failure policy, replay |
@@ -99,11 +99,11 @@ On the laptop, start the AI server, then the gate (with EZKL's CLI on Linux):
 ```
 .venv/bin/python prover/server.py --listen 127.0.0.1:8701
 python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main; main()' \
-  --listen 0.0.0.0:8700 --server 127.0.0.1:8701 --bundle BUNDLE_DIR --pins device/tiny.sha256 \
+  --listen OUTSIDE_IP:8700 --server 127.0.0.1:8701 --bundle BUNDLE_DIR --pins device/tiny.sha256 \
   --cli ./ezkl --domain tests/fixtures/tiny/domain.json --proof-bytes 3072
 ```
 
-`BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. `prover/server.py --mode` makes the server misbehave (see its docstring). Not yet run on the Pi.
+`OUTSIDE_IP` is the outside interface's own address; don't use `0.0.0.0`, which listens on every interface. `BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. `prover/server.py --mode` makes the server misbehave (see its docstring). Not yet run on the Pi.
 
 ## Measured so far
 
