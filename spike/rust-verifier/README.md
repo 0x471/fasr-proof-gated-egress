@@ -2,7 +2,7 @@
 
 Question from the plan: can EZKL's verifier be built as one small program for the device, instead of shipping EZKL's 36 MB CLI (which also contains the prover, setup and EVM code)?
 
-**Answer: yes, on the laptop.** `pge_verify.rs` is a 50-line example built inside EZKL v23.0.5's own checkout with `--no-default-features`, so none of the ONNX, EVM, tokio, reqwest or OpenSSL code is compiled in. It calls the same functions as the CLI's `verify` (`src/execute.rs`): settings, SRS (downsized to `logrows`), vk, proof, then `verify_proof_circuit` with SHPLONK, a single strategy and the EVM transcript.
+**Answer: yes, on the laptop.** `pge_verify.rs` is a 50-line example built inside EZKL v23.0.5's own checkout with `--no-default-features`, which turns off EZKL's ONNX, Ethereum deployment (alloy, foundry), tokio, reqwest and OpenSSL features. EZKL's proof library `snark-verifier` still compiles `revm` (an Ethereum virtual machine) and `alloy-primitives` as dependencies; the linker drops almost all of it (one `revm` symbol in the macOS binary). The `EvmTranscript` names in the binary are the Keccak transcript EZKL proofs use, which any verifier needs. A trusted-code-size claim should count what is linked, not what is compiled. It calls the same functions as the CLI's `verify` (`src/execute.rs`): settings, SRS (downsized to `logrows`), vk, proof, then `verify_proof_circuit` with SHPLONK, a single strategy and the EVM transcript.
 
 | | EZKL CLI 23.0.5 | `pge_verify` |
 |---|---|---|
