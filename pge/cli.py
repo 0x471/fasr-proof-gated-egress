@@ -21,7 +21,7 @@ from pathlib import Path
 
 from pge.binding import BindingError
 from pge.bundle import Bundle
-from pge.verdict import Verdict, canonical_proof, read_proof
+from pge.verdict import MAX_PROOF_BYTES, Verdict, canonical_proof, read_proof
 
 MAX_OUTPUT_BYTES = 1 << 16
 
@@ -77,18 +77,24 @@ def _run(argv: list[str], log: Path, timeout: float) -> tuple[Verdict, str]:
 
 
 def verify_with_cli(bundle: Bundle, proof: str | Path, cli: str | Path, timeout: float) -> tuple[Verdict, str]:
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0 < timeout < math.inf:
-        return Verdict.ERROR, f"bad timeout {timeout!r}"
-    try:
-        bundle.check()
-    except (OSError, BindingError) as e:
-        return Verdict.ERROR, f"bundle check failed: {e}"
     try:
         data = read_proof(proof)
     except OSError as e:
         return Verdict.ERROR, f"cannot read proof: {e.strerror or type(e).__name__}"
     except BindingError as e:
         return Verdict.REJECT, str(e)
+    return verify_bytes_with_cli(bundle, data, cli, timeout)
+
+
+def verify_bytes_with_cli(bundle: Bundle, data: bytes, cli: str | Path, timeout: float) -> tuple[Verdict, str]:
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0 < timeout < math.inf:
+        return Verdict.ERROR, f"bad timeout {timeout!r}"
+    try:
+        bundle.check()
+    except (OSError, BindingError) as e:
+        return Verdict.ERROR, f"bundle check failed: {e}"
+    if len(data) > MAX_PROOF_BYTES:
+        return Verdict.REJECT, "proof too large"
     try:
         canonical = canonical_proof(data)
     except BindingError as e:
