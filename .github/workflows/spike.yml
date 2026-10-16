@@ -1,7 +1,9 @@
 name: spike
 on:
   push:
-    paths: ["spike/**", ".github/workflows/spike.yml"]
+    paths: ["spike/**", "tests/fixtures/tiny/**", ".github/workflows/spike.yml"]
+  pull_request:
+    paths: ["spike/**", "tests/fixtures/tiny/**", ".github/workflows/spike.yml"]
 permissions:
   contents: read
 jobs:
