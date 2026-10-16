@@ -1,0 +1,5 @@
+# Added to Buildroot's raspberrypi4_64_defconfig for the v1 image.
+# glibc: the official EZKL CLI is linked against glibc (needs GLIBC_2.18 or newer).
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+# The gate service (pge) is plain Python with no third-party packages.
+BR2_PACKAGE_PYTHON3=y
