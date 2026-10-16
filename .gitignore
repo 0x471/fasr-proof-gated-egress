@@ -11,3 +11,6 @@ prover/artifacts/
 *.key
 # ...except the pinned, public verification key used by the tests
 !tests/fixtures/*/vk.key
+
+# Spike build checkout
+spike/rust-verifier/.build/
