@@ -921,3 +921,35 @@ def test_halt_on_the_earliest_request_revokes_later_held_successes(tiny_bundle):
         await _settle(gate)
         assert [m["ok"] for m in got] == [False, False] and gate.halted
     asyncio.run(go())
+
+
+# W4: the server hides bits in the order it answers a batch of concurrent requests.
+
+def test_order_coding_round_trips():
+    import itertools
+    import math
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import order_index
+    from server import bits_per_batch, permutation
+
+    assert [bits_per_batch(k) for k in range(2, 9)] == [1, 2, 4, 6, 9, 12, 15]
+    for k in range(2, 7):
+        perms = [permutation(v, k) for v in range(math.factorial(k))]
+        assert perms == [list(p) for p in itertools.permutations(range(k))]
+        assert [order_index(p) for p in perms] == list(range(len(perms)))
+
+
+@pytest.mark.parametrize("release, leaked", [("immediate", True), ("arrival", False)])
+def test_order_bits_leak_only_without_arrival_order(tiny_bundle, verifier, release, leaked):
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import decode_order_bits, trace_batches
+
+    bits, batch = "10110111", 4
+
+    async def t(st):
+        port = st.servers[1].sockets[0].getsockname()[1]
+        rows = await trace_batches("127.0.0.1", port, [[TINY_X]] * 8, batch)
+        assert all(r["answer"]["ok"] for r in rows) and sorted(r["id"] for r in rows) == list(range(8))
+        assert decode_order_bits(rows, batch) == (bits if leaked else "0" * len(bits))
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "order_bits", bits=bits, batch=batch),
+              policy=Policy(deadline=5, release=release))
