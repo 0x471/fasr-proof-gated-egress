@@ -1,5 +1,10 @@
 # Limitations and open questions
 
+> **In short**
+> - Not built yet: the stripped v1 system running the gate, secure boot, signed updates, and a defence for the failure channel.
+> - Not measured yet: a real upper bound on leakage, several users at once, packet-level signals, the speed-versus-leakage trade-off.
+> - The results assume all of the server's traffic goes through the gate, one approved model, and a sound proof system.
+
 ## Not built yet
 
 - **The v1 image.** The v1 software runs on the stock OS. The stripped image (only the gate, two wired ports, read-only system, a separate unprivileged user for the verifier, a log partition) is in progress.
