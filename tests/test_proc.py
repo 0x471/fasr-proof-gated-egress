@@ -1,4 +1,5 @@
 import os
+import resource
 import signal
 import sys
 import time
@@ -70,10 +71,14 @@ def test_killed_child_reports_the_signal(killer):
 # Resource limits, set by a single-threaded trampoline before exec.
 
 def test_limits_are_set_in_the_child():
-    code = ("import resource as r; print(*[r.getrlimit(x)[0] for x in "
-            "(r.RLIMIT_CPU, r.RLIMIT_FSIZE, r.RLIMIT_NOFILE, r.RLIMIT_CORE)])")
+    code = ("import resource as r; print(*[v for x in (r.RLIMIT_CPU, r.RLIMIT_FSIZE, r.RLIMIT_NOFILE, r.RLIMIT_CORE)"
+            " for v in r.getrlimit(x)])")
     status, rc, out = run_bounded([PY, "-c", code], 30, 1000, limits=Limits(cpu=7, file_size=4096, open_files=32))
-    assert (status, rc, out) == (OK, 0, b"7 4096 32 0\n")
+    assert (status, rc, out) == (OK, 0, b"7 7 4096 4096 32 32 0 0\n")
+
+
+def test_core_dumps_are_always_off():
+    assert f"{resource.RLIMIT_CORE}=0" in Limits().spec().split(",")
 
 
 def test_cpu_limit_stops_a_busy_child():
