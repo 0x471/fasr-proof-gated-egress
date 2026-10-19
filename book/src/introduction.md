@@ -1,42 +1,50 @@
 # Proof-gated egress
 
-A small, off-the-shelf device (a Raspberry Pi 4) that sits between an AI server and the outside world and releases an answer only if it carries a valid zero-knowledge proof that the approved model produced it from that exact request. This book collects the design, the threat model, every attack tried so far and what was measured.
+> **In short**
+> - A small computer (a Raspberry Pi) sits between an AI server and the outside world. It lets an answer out only if a cryptographic proof shows the approved model produced it from that exact question.
+> - That stops a hacked server from changing **what** an answer says. It doesn't stop it from signalling through **when** answers leave, **in what order**, or **which ones fail**.
+> - We measured those three signals on the real device and found ways to close two of them. The third, deliberate failures, is still open.
 
-> **Work in progress (October 2026).** Nothing here is production security. Every claim is limited to what the named test or measurement shows, and the measurements are achieved rates for specific attacks, not upper bounds.
+This work was supported by ERA's Frontier AI Security Residency. It is work in progress (October 2026), not production security.
 
-This work was supported by ERA's Frontier AI Security Residency.
+## Why this matters
 
-## The problem
+The most valuable thing an AI lab owns is its model's weights. A hacked server, or a model acting against its owners, could try to smuggle weights out a little at a time, hidden inside ordinary answers. If every answer has to pass through a checkpoint that verifies a proof, the server loses the freedom to hide data in the content of its answers. The checkpoint is small and simple, so it is much easier to secure than the datacenter behind it.
 
-A compromised AI server, or the model it serves, may try to get its weights out. The obvious route out is the answers themselves. If every answer must come with a proof that it is the approved model's output on the request it was asked, a device at the boundary can check the proof and block anything else. Securing the boundary then means securing one small device instead of a datacenter.
+```text
+                          +---------+
+  user  ---- question --> |  gate   | ---- question ---->  AI server
+                          |  (Pi)   |                     (may be hacked)
+        <--- answer ----- |         | <--- answer + proof
+          or "unavailable"+---------+
+```
 
-A valid proof removes the server's choice over **what** an answer says. It says nothing about **when** the answer arrives, **whether** it arrives, in **what order** answers arrive, or what the packets look like. A server that can't change the content can still signal through those. Measuring and closing those channels is half of this project; hardening the device itself is the other half.
+We call the Pi running the checking software **the gate**.
 
-## What has been shown so far
+## What we found
 
-| Question | Answer so far | Where |
-|---|---|---|
-| Can a Pi check a proof per answer? | Yes: about 100 ms per check with EZKL's official CLI, 239 ms with the full gate path and resource limits | [Results](results.md) |
-| Does the device bind each proof to its own request? | Yes, for the test circuits: it encodes the request itself, pins the model's settings, key and setup, and decodes the output only from verified values | [Request binding](binding-spec.md) |
-| Can a compromised server leak through the order of answers? | Yes, unless answers leave in request order; then no | [Results](results.md#release-policies-on-the-pi) |
-| Through answer timing? | Yes, fully, unless every answer leaves at a fixed time; then a small residue remains (about 0.15-0.2 bit per answer) and every answer waits the whole budget | [Results](results.md#release-policies-on-the-pi) |
-| Through deliberate failures? | Yes, under every release policy tried: one failure per 16 answers carried 4 bits | [Results](results.md#release-policies-on-the-pi) |
-| What else is open? | The stripped and hardened device images, signed updates, secure boot, packet-level channels, a real capacity estimate | [Limitations](limitations.md) |
+| Way to smuggle data out | Basic gate | Best gate so far | What it costs |
+|---|---|---|---|
+| Change what an answer says | Blocked by the proof | Blocked | Nothing |
+| Reorder answers | Leaks | **Closed**: answers leave in the order questions arrived | A slow answer delays the ones behind it |
+| Delay answers | Leaks | **Almost closed**: every answer leaves at a fixed time | Answers take 4 s instead of 0.8 s |
+| Fail chosen answers on purpose | Leaks | **Still leaks** | Open problem |
 
-## Versions of the device
+Details and numbers are in [What a hacked server can still leak](leakage.md).
+
+## Status
 
 | Version | What it is | Status |
 |---|---|---|
-| v0 baseline | The verifier as a normal program on standard Raspberry Pi OS | Measured on the Pi |
-| v1 stripped | A minimal Buildroot system that runs only the gate; two wired ports; fixed-size binary messages; resource limits on the verifier | Software done and measured on the Pi (on the v0 OS); the image is in progress |
-| v2 hardened | Fixed release time, signed and rollback-protected updates, secure boot | Fixed release done in software; the rest planned |
+| v0 | The checking software on the Pi's standard operating system | Done and measured |
+| v1 | Stricter software on a stripped-down system with nothing else running | Software done and measured; the stripped system boots, the software isn't on it yet |
+| v2 | Fixed release times, secure boot, signed updates | Fixed release done; the rest planned |
 
-## How to read this book
+## Where to start
 
-- [How it works](how-it-works.md): the device, the request path and the three release policies.
-- [Results](results.md): every measurement, with its conditions and what it does not show.
-- [Threat model](threat-model.md) and [Known-attacks catalogue](attacks.md): the security analysis; every attack has a result and the test that covers it.
-- [Gate service](service-spec.md) and [Request binding](binding-spec.md): the exact behaviour, as specified for the code.
-- [Reproduce the results](reproduce.md): commands for the tests and the Pi experiments.
+- **5 minutes:** this page, then [What a hacked server can still leak](leakage.md).
+- **Assessing the security:** [How hard the gate is to attack](hardening.md), then the [Attack catalogue](attacks.md) and [Threat model](threat-model.md).
+- **Checking the numbers:** [Measurements](results.md) and [Reproduce the results](reproduce.md).
+- **New to the terms:** the [Glossary](glossary.md).
 
 The code is at [github.com/0x471/fasr-proof-gated-egress](https://github.com/0x471/fasr-proof-gated-egress).
