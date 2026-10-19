@@ -26,3 +26,9 @@ DATA="$SRC/test_data"
   --proof_path "$HERE/fixtures/weak_all_opcode.bin" --proof-format binary \
   --params_json "$HERE/weak_params.json" >/dev/null
 (cd "$HERE/fixtures" && shasum -a 256 -c SHA256SUMS)
+for t in ret_opcode all_opcode_components; do
+  got="$(python3 -I "$HERE/program_hash.py" "$DATA/test_prove_verify_$t/compiled.json")"
+  want="$(awk -v t="$t" '$1 == t {print $2}' "$HERE/fixtures/pins.txt")"
+  [ "$got" = "$want" ] || { echo "program hash of $t is $got, pinned $want" >&2; exit 1; }
+done
+echo "program hashes match the pins"
