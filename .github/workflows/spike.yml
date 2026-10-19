@@ -35,3 +35,8 @@ jobs:
         run: echo "BIN=$(spike/rust-verifier/build.sh "$RUNNER_TEMP")" >> "$GITHUB_ENV"
       - run: ls -l "$BIN" && ldd "$BIN" || true
       - run: spike/rust-verifier/check.sh "$BIN" kzg.srs
+  stwo-verifier:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: spike/stwo-verifier/check.sh
