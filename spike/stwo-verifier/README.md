@@ -40,6 +40,8 @@ Proving is deterministic: `prove.sh` reproduces `fixtures/SHA256SUMS` byte for b
 
 Whole-process verify with all pins, n = 20: ret_opcode 35 / 36 / 36 ms (min / median / max), all_opcode_components 65 / 65 / 67 ms. Peak RSS 9 MB and 15 MB.
 
+On the Raspberry Pi 4 (2 GB, Pi OS, 19 Oct), same pins, n = 20: ret_opcode median 122 ms, all_opcode_components 254 ms, the same with one thread. Peak memory 5.6 MB and 8.6 MB (sampled), 22 MB for the bomb. That build used `nightly-2025-12-01` from the build VM instead of the pinned toolchain, and passed all 55 cases.
+
 `cases.py` runs 55 cases: valid proofs, an output pin that differs, a proof of another program, the weak proof, garbage, empty, truncated, a flipped compressed byte, zeros or a second stream after the bzip2 stream, trailing payload bytes, a file over 8 MiB, a 1 GiB bzip2 bomb (stopped at 16 MiB, 21 MB peak RSS), a huge length prefix and 40 random payload bit flips. All get the expected exit code; none panics.
 
 ## Open question
@@ -48,6 +50,6 @@ On 1 Jul the Cairo verifier gained two checks in `verify_claim`: the output segm
 
 ## Not done
 
-- The Pi (aarch64) build and timing.
+- An aarch64 build with the pinned toolchain.
 - Fuzzing the claim fields to reach the `assert!` paths.
 - An independent program hash.

@@ -122,6 +122,7 @@ python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main
 | Open TCP ports seen from the laptop (nmap) | Pi, v0 | 22 (ssh), 8700 (gate) |
 | Raw proof size | | 3072 bytes |
 | S-two proof (binary), verify with all pins, n = 20 | laptop (M4 Pro) | 455-870 KB; median 36-65 ms per process, 9-15 MB peak RSS (`spike/stwo-verifier`) |
+| S-two proof (binary), verify with all pins, n = 20 | Raspberry Pi 4 (19 Oct) | median 122 ms (455 KB) and 254 ms (870 KB); under 9 MB peak memory |
 | S-two proof with 2-bit security parameters | laptop | accepted by stwo-cairo's own `verify` CLI; rejected by the pinned verifier |
 | Tampered input, output and proof bytes | laptop | rejected |
 | Tampered input, output, garbage file | Raspberry Pi | rejected (non-zero exit) |
