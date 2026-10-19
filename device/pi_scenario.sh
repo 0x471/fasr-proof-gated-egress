@@ -13,13 +13,20 @@ OUT="${OUT:-runs}"
 DEADLINE="${DEADLINE:-10}"
 SPIN_MS="${SPIN_MS:-0}"
 mkdir -p "$OUT"
+STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 NAME=$1 RELEASE=$2 N=$3 BATCH=$4; shift 5
+# These go into a command run by the Pi's shell, so only plain values are allowed.
+[[ "$NAME" =~ ^[A-Za-z0-9_]+$ ]] || { echo "bad NAME"; exit 2; }
+[[ "$RELEASE" =~ ^(immediate|arrival|fixed)$ ]] || { echo "bad RELEASE"; exit 2; }
+[[ "$N" =~ ^[1-9][0-9]{0,4}$ && "$BATCH" =~ ^[1-9][0-9]{0,3}$ ]] || { echo "bad N or BATCH"; exit 2; }
+[[ "$DEADLINE" =~ ^[0-9]+(\.[0-9]+)?$ && "$SPIN_MS" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "bad DEADLINE or SPIN_MS"; exit 2; }
 X='[[0.5, -0.2, 0.9, 0.1]]'
 cleanup() {
   ssh -n p01 "pkill -f '[f]rom pge.service import main'; true"
   pkill -f "[p]rover/server.py --listen 192.168.2.1" ; sleep 0.5; pkill -9 -f "[p]rover/server.py --listen 192.168.2.1"; true
 }
 cleanup
+trap cleanup EXIT
 ssh -n p01 "ss -ltn | grep -q ':8700 '" && { echo "$NAME: port 8700 still busy"; exit 1; }
 .venv/bin/python prover/server.py --listen 192.168.2.1:8701 "$@" 2>"$OUT/$NAME.server.log" &
 for i in $(seq 120); do grep -q listening "$OUT/$NAME.server.log" && break; sleep 0.5; done
@@ -33,8 +40,14 @@ done
 [ $ok = 1 ] || { echo "$NAME: gate not up"; ssh -n p01 "cat ~/gate_$NAME.err" | tail -3; cleanup; exit 1; }
 if [ "$BATCH" -gt 1 ]; then B="--batch $BATCH"; else B=""; fi
 timeout 600 /usr/bin/python3 observer/client.py 192.168.2.2 8700 "$X" --n "$N" $B > "$OUT/$NAME.trace.jsonl" 2>"$OUT/$NAME.client.err"
-echo "$NAME: client exit $? rows $(wc -l < "$OUT/$NAME.trace.jsonl" | tr -d ' ')"
+rc=$?
+rows=$(wc -l < "$OUT/$NAME.trace.jsonl" | tr -d ' ')
 sleep 0.5
 ssh -n p01 "cat ~/gate_$NAME.log" > "$OUT/$NAME.gate.jsonl"
 ssh -n p01 "cat ~/gate_$NAME.err" > "$OUT/$NAME.gate.err"
-cleanup
+status=ok
+[[ $rc == 0 && $rows == "$N" ]] || status=failed
+printf '{"name": "%s", "release": "%s", "n": %s, "batch": %s, "deadline": %s, "spin_ms": %s, "commit": "%s", "started": "%s", "client_exit": %s, "rows": %s, "status": "%s", "server_args": "%s"}\n' \
+  "$NAME" "$RELEASE" "$N" "$BATCH" "$DEADLINE" "$SPIN_MS" "$(git rev-parse --short HEAD)" "$STARTED" "$rc" "$rows" "$status" "$*" > "$OUT/$NAME.manifest.json"
+echo "$NAME: client exit $rc rows $rows/$N $status"
+[[ $status == ok ]]

@@ -5,10 +5,12 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 export OUT="${OUT:-runs/matrix}" DEADLINE="${DEADLINE:-4}"
 BITS=1101001110100111
+failed=0
+run() { device/pi_scenario.sh "$@" || failed=$((failed + 1)); }
 for r in immediate arrival fixed; do
-  device/pi_scenario.sh "honest_$r" "$r" 16 1 -- --mode honest
-  device/pi_scenario.sh "timing_$r" "$r" 16 1 -- --mode timing_bits --bits "$BITS" --slot 1.0
-  device/pi_scenario.sh "order_$r" "$r" 24 3 -- --mode order_bits --batch 3 --bits "$BITS"
-  device/pi_scenario.sh "failpos_$r" "$r" 64 1 -- --mode fail_position --batch 16 --bits "$BITS"
+  run "honest_$r" "$r" 16 1 -- --mode honest
+  run "timing_$r" "$r" 16 1 -- --mode timing_bits --bits "$BITS" --slot 1.0
+  run "order_$r" "$r" 24 3 -- --mode order_bits --batch 3 --bits "$BITS"
+  run "failpos_$r" "$r" 64 1 -- --mode fail_position --batch 16 --bits "$BITS"
 done
-echo MATRIX DONE
+if [[ $failed == 0 ]]; then echo MATRIX DONE; else echo "MATRIX INCOMPLETE: $failed cell(s) failed" >&2; exit 1; fi
