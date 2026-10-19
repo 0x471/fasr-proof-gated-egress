@@ -29,6 +29,10 @@ Verifier = Callable[[bytes, float], "tuple[Verdict, str]"]
 # Requests queued to a server that stopped reading; past this the link is dropped.
 SERVER_BUFFER_MAX = 1 << 20
 
+# Every reason a log record can give. Anything else is logged as "other".
+REASONS = frozenset({"request", "proof_length", "binding", "proof", "verifier", "verifier_failed",
+                     "reply_too_large", "closed", "violation", "lost", "protocol", "ids"})
+
 
 def _number(v, lo: float, hi: float) -> bool:
     return not isinstance(v, bool) and isinstance(v, (int, float)) and lo < v <= hi
@@ -103,9 +107,12 @@ class Gate:
         except Exception:
             self.counts["log_error"] += 1
 
-    def _record(self, result: str, p: _Pending | None, detail: str = "", x_sha256: str = "") -> None:
+    def _record(self, result: str, p: _Pending | None, reason: str = "", x_sha256: str = "") -> None:
+        # Only fixed words reach the log: error text can carry server-chosen values.
         self.counts[result] += 1
-        rec = {"result": result, "detail": detail[:200]}
+        rec = {"result": result}
+        if reason:
+            rec["reason"] = reason if reason in REASONS else "other"
         if p is not None:
             rec.update(seq=p.seq, x_sha256=p.x_sha256, ms=round((time.monotonic() - p.started) * 1000, 1))
         elif x_sha256:
@@ -119,19 +126,19 @@ class Gate:
         except Exception:
             pass
 
-    def _fail(self, p: _Pending, result: str, detail: str, count: bool = True) -> None:
+    def _fail(self, p: _Pending, result: str, reason: str = "", count: bool = True) -> None:
         """Answer unavailable. Failures the server caused count towards halt_after."""
         self._send(p.reply, client_error(p.cid, "unavailable"))
-        self._record(result, p, detail)
+        self._record(result, p, reason)
         if not count:
             return
         self.failures += 1
         if self.policy.halt_after is not None and self.failures >= self.policy.halt_after and not self.halted:
             self.halted = True
-            self._log({"result": "halted", "detail": f"{self.failures} failures"})
+            self._log({"result": "halted", "failures": self.failures})
             for seq in sorted(self.pending):
                 q = self._finish(seq)
-                self._fail(q, "halted", "device halted", count=False)
+                self._fail(q, "halted", count=False)
 
     def _finish(self, seq: int) -> _Pending | None:
         p = self.pending.pop(seq, None)
@@ -147,7 +154,7 @@ class Gate:
                 self.domain.check(self.spec, x)
         except (BindingError, TypeError) as e:
             self._send(reply, client_error(cid, "bad_request"))
-            self._record("bad_request", None, str(e))
+            self._record("bad_request", None, "request")
             return
         x_sha256 = hashlib.sha256(json.dumps(encoded).encode()).hexdigest()
         if self.halted or len(self.pending) >= self.policy.max_pending:
@@ -161,26 +168,26 @@ class Gate:
                      x_sha256=x_sha256)
         server = self._server
         if server is None or server.is_closing():
-            self._fail(p, "no_server", "no server connection")
+            self._fail(p, "no_server")
             return
         p.timer = loop.call_later(self.policy.deadline, self._expire, p.seq)
         self.pending[p.seq] = p
         server.write(frame(server_request(p.seq, x)))
         if server.transport.get_write_buffer_size() > SERVER_BUFFER_MAX:
-            self._record("server_stalled", None, "server is not reading requests")
+            self._record("server_stalled", None)
             server.close()
 
     def _expire(self, seq: int) -> None:
         p = self._finish(seq)
         if p is not None:
-            self._fail(p, "deadline", f"no checked answer within {self.policy.deadline} s")
+            self._fail(p, "deadline")
 
     def _expired(self, p: _Pending) -> bool:
         # The timer can run late if the loop stalls, so the deadline is also checked directly.
         if time.monotonic() < p.due:
             return False
         if self._finish(p.seq) is not None:
-            self._fail(p, "deadline", f"no checked answer within {self.policy.deadline} s")
+            self._fail(p, "deadline")
         return True
 
     def on_answer(self, seq: int, outputs: list, proof: bytes) -> None:
@@ -203,17 +210,20 @@ class Gate:
         self._tasks.discard(task)
         if not task.cancelled() and task.exception() is not None:
             self.counts["check_crashed"] += 1
-            self._log({"result": "check_crashed", "detail": type(task.exception()).__name__})
+            self._log({"result": "check_crashed"})
 
     async def _check(self, p: _Pending, outputs: list, proof: bytes) -> None:
-        try:
-            if self.policy.proof_bytes is not None and len(proof) != self.policy.proof_bytes:
-                raise BindingError(f"proof is {len(proof)} bytes, expected {self.policy.proof_bytes}")
-            instances = build_instances(self.spec, p.x, outputs)
-            y = decode_outputs(self.spec, outputs)
-        except BindingError as e:
-            verdict, detail = Verdict.REJECT, f"binding: {e}"
+        if self.policy.proof_bytes is not None and len(proof) != self.policy.proof_bytes:
+            verdict, reason = Verdict.REJECT, "proof_length"
         else:
+            try:
+                instances = build_instances(self.spec, p.x, outputs)
+                y = decode_outputs(self.spec, outputs)
+            except BindingError:
+                verdict, reason = Verdict.REJECT, "binding"
+            else:
+                verdict, reason = None, ""
+        if verdict is None:
             data = json.dumps({"instances": instances, "proof": list(proof)}).encode()
             async with self._lock:
                 if p.seq not in self.pending or self._expired(p):
@@ -224,8 +234,9 @@ class Gate:
                     verdict, detail = result
                     if not isinstance(verdict, Verdict) or not isinstance(detail, str):
                         raise TypeError("verifier must return (Verdict, str)")
-                except Exception as e:
-                    verdict, detail = Verdict.ERROR, f"verifier failed: {type(e).__name__}"
+                    reason = "proof" if verdict is Verdict.REJECT else "verifier"
+                except Exception:
+                    verdict, reason = Verdict.ERROR, "verifier_failed"
         if p.seq not in self.pending:
             self.counts["late_check"] += 1
             return
@@ -233,25 +244,25 @@ class Gate:
             return
         self._finish(p.seq)
         if verdict is not Verdict.ACCEPT:
-            self._fail(p, verdict.value, detail)
+            self._fail(p, verdict.value, reason)
         else:
             msg = client_ok(p.cid, y)
             if len(msg) > REPLY_MAX:
-                self._fail(p, "error", "reply too large")
+                self._fail(p, "error", "reply_too_large")
                 return
             self._send(p.reply, msg)
             self._record("accept", p)
 
-    def fail_all(self, detail: str) -> None:
+    def fail_all(self, reason: str) -> None:
         for seq in sorted(self.pending):
             p = self._finish(seq)
             if p is not None:
-                self._fail(p, "disconnect", detail)
+                self._fail(p, "disconnect", reason)
 
     async def serve_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Serve one client. After it stops sending (end of stream or idle), its pending answers are still sent."""
         if self.clients >= self.policy.max_clients:
-            self._record("client_refused", None, "too many connections")
+            self._record("client_refused", None)
             writer.close()
             return
         self.clients += 1
@@ -280,11 +291,11 @@ class Gate:
                     self._record("client_idle", None)
                     break
                 except ProtocolError as e:
-                    self._record("client_violation", None, str(e))
+                    self._record("client_violation", None, "protocol")
                     violated = True
                     break
                 if cid <= last:
-                    self._record("client_violation", None, "ids must be strictly increasing")
+                    self._record("client_violation", None, "ids")
                     violated = True
                     break
                 last = cid
@@ -304,7 +315,7 @@ class Gate:
     async def attach_server(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Use this connection to the server until it ends or breaks the protocol."""
         self._server = writer
-        detail = "server closed the connection"
+        reason = "closed"
         try:
             while True:
                 data = await read_frame(reader, SERVER_MAX, body_timeout=self.policy.deadline)
@@ -313,24 +324,23 @@ class Gate:
                 seq, outputs, proof = parse_server(data)
                 self.on_answer(seq, outputs, proof)
         except ProtocolError:
-            # Fixed text: the error message can hold server-chosen values.
-            self._record("server_violation", None, "malformed frame or answer")
-            detail = "server violation"
-        except (ConnectionError, OSError) as e:
-            detail = f"server connection lost: {type(e).__name__}"
+            self._record("server_violation", None)
+            reason = "violation"
+        except (ConnectionError, OSError):
+            reason = "lost"
         finally:
             if self._server is writer:
                 self._server = None
             writer.close()
-            self.fail_all(detail)
+            self.fail_all(reason)
 
     async def link(self, host: str, port: int) -> None:
         delay = 0.5
         while True:
             try:
                 reader, writer = await asyncio.open_connection(host, port)
-            except OSError as e:
-                self._log({"result": "connect_failed", "detail": type(e).__name__})
+            except OSError:
+                self._log({"result": "connect_failed"})
             else:
                 delay = 0.5
                 await self.attach_server(reader, writer)
