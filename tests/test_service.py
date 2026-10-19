@@ -1110,3 +1110,12 @@ def test_spin_never_blocks_the_loop_for_long(tiny_bundle):
             last = now
         assert len(records) == 20 and max(gaps) < 0.02 + 0.015
     asyncio.run(go())
+
+
+def test_order_decoder_marks_bad_batches_and_stays_aligned():
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import decode_order_bits
+    rows = lambda ids: [{"id": i} for i in ids]
+    assert decode_order_bits(rows([2, 1, 0, 3, 4, 5]), 3) == "??00"  # rank 5 is never sent for 2 bits
+    assert decode_order_bits(rows([0, 0, 2, 4, 3, 5]), 3) == "??10"  # duplicate id; [4, 3, 5] is rank 2
+    assert decode_order_bits(rows([1, 0, 2, 3, 5, 4]), 3) == "1001"
