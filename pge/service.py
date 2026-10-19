@@ -123,6 +123,7 @@ class Gate:
     # Decided answers waiting for every earlier seq to be released (arrival order).
     _held: dict[int, tuple[_Pending, bytes, str, str]] = field(default_factory=dict)
     _next_release: int = 1
+    _pump_timer: asyncio.TimerHandle | None = None
     _server: asyncio.StreamWriter | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _pool: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1))
@@ -159,7 +160,7 @@ class Gate:
 
     def _release(self, p: _Pending, msg: bytes, result: str, reason: str = "") -> None:
         """Send and log the answer for an admitted request: at once (immediate), in seq order
-        (arrival), or at its deadline (fixed).
+        (arrival), or in seq order and not before its deadline (fixed).
 
         A held success is checked again when it leaves: after a halt, or in arrival order past
         its own deadline, it becomes unavailable.
@@ -170,11 +171,7 @@ class Gate:
             return
         self._held[p.seq] = (p, msg, result, reason)
         if self.policy.release == "fixed":
-            delay = p.due - time.monotonic() - self.policy.spin
-            if delay > 0:
-                asyncio.get_running_loop().call_later(delay, self._release_at_deadline, p.seq)
-            else:
-                self._release_at_deadline(p.seq)
+            self._pump()
             return
         while self._next_release in self._held:
             p, msg, result, reason = self._held.pop(self._next_release)
@@ -188,14 +185,33 @@ class Gate:
             if late:
                 self._count_failure()
 
-    def _release_at_deadline(self, seq: int) -> None:
-        p, msg, result, reason = self._held.pop(seq)
-        while self.policy.spin and time.monotonic() < p.due:
-            pass
-        if result == "accept" and self.halted:
-            msg, result, reason = self.wire.reply_error(p.cid, "unavailable"), "halted", ""
-        self._send(p.reply, msg)
-        self._record(result, p, reason)
+    def _pump(self) -> None:
+        """Fixed release: send held answers in seq order, each no earlier than its deadline.
+
+        Only the next answer in order waits, so an earlier undecided request can't be overtaken.
+        With spin, the timer fires early and the last stretch is a busy-wait; after one busy-wait
+        the loop yields before the next, so the event loop is never blocked for more than spin.
+        """
+        if self._pump_timer is not None:
+            self._pump_timer.cancel()
+            self._pump_timer = None
+        spun = False
+        while self._next_release in self._held:
+            p = self._held[self._next_release][0]
+            wait = p.due - time.monotonic()
+            if wait > 0 and (spun or wait > self.policy.spin):
+                self._pump_timer = asyncio.get_running_loop().call_later(max(0.0, wait - self.policy.spin), self._pump)
+                return
+            if wait > 0:
+                while time.monotonic() < p.due:
+                    pass
+                spun = True
+            p, msg, result, reason = self._held.pop(self._next_release)
+            self._next_release += 1
+            if result == "accept" and self.halted:
+                msg, result, reason = self.wire.reply_error(p.cid, "unavailable"), "halted", ""
+            self._send(p.reply, msg)
+            self._record(result, p, reason)
 
     def _count_failure(self) -> None:
         self.failures += 1
