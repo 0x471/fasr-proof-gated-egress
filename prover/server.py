@@ -14,6 +14,8 @@ misbehave, for the service tests and as the start of the W4 malicious-prover har
   oversize         send a frame over the device's limit
   garbage          send a frame that isn't a well-formed answer
   timing_bits      hide --bits in the answer times: delay by --slot seconds for a 1
+  order_bits       hide --bits in the order of each --batch answers: floor(log2(batch!)) bits
+                   per batch, as the index of a permutation
 
 Usage: python prover/server.py --listen 127.0.0.1:8701 [--mode honest]
 """
@@ -24,6 +26,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import math
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -39,7 +42,20 @@ TINY = ROOT / "tests" / "fixtures" / "tiny"
 TINY_SETTINGS_SHA256 = "b4a95fc7c572816034708c4e5c079f0f91f82eb9681cfa069565aacc9887aefd"
 TINY_VK_SHA256 = "34ab48a8ac0946be4faf10d85699ac729adb20ec4c6251da1d1d0d4ea18a4d26"
 MODES = ("honest", "drop", "delay", "tamper_output", "replay", "duplicate", "wrong_seq", "oversize", "garbage",
-         "timing_bits")
+         "timing_bits", "order_bits")
+
+
+def bits_per_batch(k: int) -> int:
+    return math.factorial(k).bit_length() - 1
+
+
+def permutation(v: int, k: int) -> list[int]:
+    """The v-th permutation of range(k) in lexicographic order (factorial number system)."""
+    items, out = list(range(k)), []
+    for i in range(k, 0, -1):
+        idx, v = divmod(v, math.factorial(i - 1))
+        out.append(items.pop(idx))
+    return out
 
 
 def _run(fn, *a, **k):
@@ -80,12 +96,18 @@ class Prover:
 
 
 class Server:
-    def __init__(self, prover, mode: str = "honest", delay: float = 0.0, bits: str = "", slot: float = 0.2):
+    def __init__(self, prover, mode: str = "honest", delay: float = 0.0, bits: str = "", slot: float = 0.2,
+                 batch: int = 2):
         if mode not in MODES:
             raise ValueError(f"unknown mode {mode!r}")
         if set(bits) - {"0", "1"}:
             raise ValueError("bits must be a string of 0 and 1")
+        if type(batch) is not int or not 2 <= batch <= 8:
+            raise ValueError("batch must be an integer in [2, 8]")
         self.prover, self.mode, self.delay, self.bits, self.slot = prover, mode, delay, bits, slot
+        self.batch = batch
+        self.held: list[tuple[int, list, bytes]] = []
+        self.used = 0
         self.wire = Wire.for_spec(prover.spec)
         self.previous: tuple[list, bytes] | None = None
         self.sent = 0
@@ -106,12 +128,25 @@ class Server:
                 except Exception as e:
                     print(f"seq {seq}: cannot prove: {type(e).__name__}", file=sys.stderr)
                     continue
+                if self.mode == "order_bits":
+                    self.held.append((seq, outputs, proof))
+                    if len(self.held) == self.batch:
+                        for i in self._order():
+                            await self._send(writer, *self.held[i])
+                        self.held = []
+                    continue
                 await self._send(writer, seq, outputs, proof)
                 self.previous = (outputs, proof)
         except (ProtocolError, ConnectionError):
             pass
         finally:
             writer.close()
+
+    def _order(self) -> list[int]:
+        m = bits_per_batch(self.batch)
+        chunk = self.bits[self.used:self.used + m].ljust(m, "0")
+        self.used += m
+        return permutation(int(chunk, 2) if m else 0, self.batch)
 
     async def _send(self, writer, seq: int, outputs: list, proof: bytes) -> None:
         m = self.mode
@@ -149,8 +184,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--delay", type=float, default=0.0)
     ap.add_argument("--bits", default="")
     ap.add_argument("--slot", type=float, default=0.2)
+    ap.add_argument("--batch", type=int, default=2)
     a = ap.parse_args(argv)
-    server = Server(Prover(a.srs), a.mode, a.delay, a.bits, a.slot)
+    server = Server(Prover(a.srs), a.mode, a.delay, a.bits, a.slot, a.batch)
     host, _, port = a.listen.rpartition(":")
 
     async def run() -> None:
