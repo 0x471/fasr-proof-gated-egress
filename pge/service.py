@@ -1,8 +1,9 @@
 """Gate service: forward requests, check every answer's proof, release y or one generic error.
 
 See docs/SERVICE_SPEC.md. v1 releases answers in arrival order over fixed-size binary frames
-and logs fixed words only; the timing and failure channels stay open until v2 (fixed release
-time). Policy(release="immediate") gives v0's release behaviour for comparison.
+and logs fixed words only. Policy(release="fixed") sends every answer at admission + deadline,
+which hides the server's timing; the failure channel stays open. Policy(release="immediate")
+gives v0's release behaviour for comparison.
 """
 from __future__ import annotations
 
@@ -30,9 +31,9 @@ Verifier = Callable[[bytes, float], "tuple[Verdict, str]"]
 # Requests queued to a server that stopped reading; past this the link is dropped.
 SERVER_BUFFER_MAX = 1 << 20
 
-# Every reason a log record can give. Anything else is logged as "other".
-RELEASES = ("arrival", "immediate")
+RELEASES = ("arrival", "immediate", "fixed")
 
+# Every reason a log record can give. Anything else is logged as "other".
 REASONS = frozenset({"request", "proof_length", "binding", "proof", "verifier", "verifier_failed",
                      "reply", "closed", "violation", "lost", "protocol", "ids", "held"})
 
@@ -55,7 +56,8 @@ class Policy:
     max_clients: int = 64
     idle: float = 60.0
     # "arrival": answers leave in the order requests were admitted, so the server can't choose
-    # the order. "immediate" (v0) releases each answer as soon as it is decided.
+    # the order. "immediate" (v0) releases each answer as soon as it is decided. "fixed": every
+    # admitted answer leaves at admission + deadline, so the server can't choose when either.
     release: str = "arrival"
 
     def __post_init__(self):
@@ -151,16 +153,24 @@ class Gate:
             pass
 
     def _release(self, p: _Pending, msg: bytes, result: str, reason: str = "") -> None:
-        """Send and log the answer for an admitted request, in seq order unless release is immediate.
+        """Send and log the answer for an admitted request: at once (immediate), in seq order
+        (arrival), or at its deadline (fixed).
 
-        A held success is checked again when it leaves: after a halt or past its own deadline
-        it becomes unavailable.
+        A held success is checked again when it leaves: after a halt, or in arrival order past
+        its own deadline, it becomes unavailable.
         """
         if self.policy.release == "immediate":
             self._send(p.reply, msg)
             self._record(result, p, reason)
             return
         self._held[p.seq] = (p, msg, result, reason)
+        if self.policy.release == "fixed":
+            delay = p.due - time.monotonic()
+            if delay > 0:
+                asyncio.get_running_loop().call_later(delay, self._release_at_deadline, p.seq)
+            else:
+                self._release_at_deadline(p.seq)
+            return
         while self._next_release in self._held:
             p, msg, result, reason = self._held.pop(self._next_release)
             self._next_release += 1
@@ -172,6 +182,13 @@ class Gate:
             self._record(result, p, reason)
             if late:
                 self._count_failure()
+
+    def _release_at_deadline(self, seq: int) -> None:
+        p, msg, result, reason = self._held.pop(seq)
+        if result == "accept" and self.halted:
+            msg, result, reason = self.wire.reply_error(p.cid, "unavailable"), "halted", ""
+        self._send(p.reply, msg)
+        self._record(result, p, reason)
 
     def _count_failure(self) -> None:
         self.failures += 1
@@ -428,7 +445,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--proof-bytes", type=int, required=True, help="exact raw proof length (3072 for the test bundles)")
     ap.add_argument("--log", help="append JSON log lines to this file instead of stderr")
     ap.add_argument("--release", default="arrival", choices=RELEASES,
-                    help="arrival: answers leave in request order (default); immediate: as decided (v0)")
+                    help="arrival: answers leave in request order (default); immediate: as decided (v0); "
+                         "fixed: each answer at admission + deadline")
     a = ap.parse_args(argv)
 
     sums = {}
