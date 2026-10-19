@@ -46,7 +46,9 @@ On the Raspberry Pi 4 (2 GB, Pi OS, 19 Oct), same pins, n = 20: ret_opcode media
 
 ## Open question
 
-On 1 Jul the Cairo verifier gained two checks in `verify_claim`: the output segment must start at the final `ap`, and the output's length goes into the builtin checks (commit `9b93cc3`, "validate output segment start and length"). The Rust verifier has neither, at the tag or on `main`. The output pin here relies on the claimed output section, so whether a prover can claim an output that the execution didn't write needs checking before the output pin is trusted.
+On 1 Jul the Cairo verifier gained two checks in `verify_claim`: the output segment must start at the final `ap`, and the output's length goes into the builtin checks (commit `9b93cc3`, "validate output segment start and length"). The Rust verifier has neither, at the tag or on `main` (`verify_builtins` checks only `start_ptr <= stop_ptr` and `stop_ptr < 2^31`).
+
+A tamper test (append or change a valid proof's claimed output, re-verify) shows the output section is bound into the Fiat-Shamir transcript: re-presenting a valid proof with a different claimed output is REJECTed. The values `get_verification_output` returns are placed at `final_ap` and bound to committed memory. Not shown (no local Cairo compiler to build an output-writing program): whether a malicious prover can emit a proof whose reported output segment range disagrees with the bound values. Until StarkWare confirms, a consumer must read outputs via the bound values at `final_ap`, not via the reported segment range.
 
 ## Not done
 
