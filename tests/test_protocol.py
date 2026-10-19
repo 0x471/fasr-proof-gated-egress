@@ -204,3 +204,28 @@ def test_split_frame_must_complete_within_one_deadline():
         return await read_frame(r, 100, body_timeout=0.25)
     with pytest.raises(ProtocolError):
         asyncio.run(go())
+
+
+def test_frames_survive_any_chunking():
+    rng = random.Random(20261020)
+    for _ in range(300):
+        payloads = [rng.choice(_valid()) for _ in range(rng.randrange(1, 5))]
+        stream = b"".join(frame(p) for p in payloads)
+
+        cuts = sorted(rng.sample(range(1, len(stream)), min(len(stream) - 1, rng.randrange(1, 60))))
+
+        async def feed(r):
+            for a, b in zip([0] + cuts, cuts + [len(stream)]):
+                r.feed_data(stream[a:b])
+                await asyncio.sleep(0)
+            r.feed_eof()
+
+        async def go():
+            r = asyncio.StreamReader()
+            feeder = asyncio.create_task(feed(r))
+            got = []
+            while (p := await read_frame(r, W.answer_max, body_timeout=1)) is not None:
+                got.append(p)
+            await feeder
+            return got
+        assert asyncio.run(go()) == payloads
