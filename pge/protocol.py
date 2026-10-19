@@ -33,14 +33,17 @@ def frame(payload: bytes) -> bytes:
 async def read_frame(reader: asyncio.StreamReader, limit: int, body_timeout: float | None = None) -> bytes | None:
     """Return the next payload, None on a clean end of stream, or raise ProtocolError.
 
-    body_timeout bounds how long a started frame may take to arrive in full.
+    body_timeout bounds how long a started frame may take to arrive in full, from its first byte.
     """
     try:
         first = await reader.readexactly(1)
     except asyncio.IncompleteReadError:
         return None
+    loop = asyncio.get_running_loop()
+    end = None if body_timeout is None else loop.time() + body_timeout
+    left = lambda: None if end is None else max(0.0, end - loop.time())
     try:
-        head = first + await asyncio.wait_for(reader.readexactly(3), body_timeout)
+        head = first + await asyncio.wait_for(reader.readexactly(3), left())
     except asyncio.IncompleteReadError as e:
         raise ProtocolError("truncated frame header") from e
     except asyncio.TimeoutError as e:
@@ -49,7 +52,7 @@ async def read_frame(reader: asyncio.StreamReader, limit: int, body_timeout: flo
     if not 0 < n <= limit:
         raise ProtocolError(f"frame length {n} outside 1..{limit}")
     try:
-        return await asyncio.wait_for(reader.readexactly(n), body_timeout)
+        return await asyncio.wait_for(reader.readexactly(n), left())
     except asyncio.IncompleteReadError as e:
         raise ProtocolError("truncated frame") from e
     except asyncio.TimeoutError as e:
