@@ -11,7 +11,9 @@ import pytest
 
 from conftest import REQUIRE, TINY, TINY_PINS
 from pge.bundle import Bundle, Pins
+import pge.cli as cli_module
 from pge.cli import MAX_OUTPUT_BYTES, classify_cli, verify_with_cli
+from pge.proc import memory_limit_supported
 from pge.verdict import Verdict, canonical_proof
 
 TS = "[2026-10-16 12:00:00:000"
@@ -35,6 +37,8 @@ if mode == "killed":
     w({ok_text!r}); sys.stdout.flush(); os.kill(os.getpid(), signal.SIGKILL)
 if mode == "huge":
     w({ok_text!r}); w(("x" * 99 + "\\n") * ({huge} // 100 + 1)); sys.exit(0)
+if mode == "write_file":
+    os.write(os.open(marker + ".w", os.O_WRONLY | os.O_CREAT), b"x"); w({ok_text!r}); sys.exit(0)
 if mode == "rc0_error":
     w({ok_text!r}); w("[E] " + ts + ", ezkl] - [srs] something\\n"); sys.exit(0)
 if mode == "binary":
@@ -111,7 +115,8 @@ def test_stub_accepts_good_and_rejects_tampered(bundle, stub, tmp_path, tiny_pro
     assert v == Verdict.REJECT and detail.startswith("[halo2] ")
 
 
-def test_cli_gets_the_bundle_copies_and_a_canonical_proof(bundle, stub):
+def test_cli_gets_the_bundle_copies_and_a_canonical_proof(bundle, stub, monkeypatch):
+    monkeypatch.setattr(cli_module, "CLI_FILE_SIZE", None)
     cli = stub()
     verify_with_cli(bundle, TINY / "proof.json", cli, 30)
     args = ast.literal_eval(stub.marker.read_text().splitlines()[0])
@@ -123,10 +128,12 @@ def test_cli_gets_the_bundle_copies_and_a_canonical_proof(bundle, stub):
 
 
 def test_cli_runs_with_a_minimal_environment(bundle, stub, monkeypatch):
+    monkeypatch.setattr(cli_module, "CLI_FILE_SIZE", None)
     monkeypatch.setenv("RUST_LOG", "debug")
     assert verify_with_cli(bundle, TINY / "proof.json", stub("env"), 30) == (Verdict.ACCEPT, "")
     names = set(ast.literal_eval(stub.marker.read_text().splitlines()[1]))
-    assert names <= {"PATH", "LC_ALL", "HOME", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"}
+    assert names <= {"PATH", "LC_ALL", "HOME", "LC_CTYPE", "__CF_USER_TEXT_ENCODING", "RAYON_NUM_THREADS"}
+    assert "RAYON_NUM_THREADS" in names
 
 
 @pytest.mark.parametrize("mode", ["accept_all", "perm", "eio", "srs_path", "halo2_unverified", "two_errors",
@@ -167,7 +174,8 @@ def test_deadline_kills_a_cli_that_ignores_sigterm(bundle, stub):
     assert time.monotonic() - start < 10
 
 
-def test_deadline_kills_the_whole_process_group(bundle, stub):
+def test_deadline_kills_the_whole_process_group(bundle, stub, monkeypatch):
+    monkeypatch.setattr(cli_module, "CLI_FILE_SIZE", None)
     cli = stub("grandchild")
     v, _ = verify_with_cli(bundle, TINY / "proof.json", cli, 2)
     assert v == Verdict.ERROR
@@ -233,3 +241,14 @@ def test_real_cli(real_cli, tiny_bundle, tiny_proof, tmp_path):
     garbage = tmp_path / "garbage.json"
     garbage.write_text("bad\n")
     assert verify_with_cli(tiny_bundle, garbage, real_cli, 60)[0] == Verdict.REJECT
+
+
+def test_a_cli_that_writes_a_file_is_stopped(bundle, stub):
+    assert verify_with_cli(bundle, TINY / "proof.json", stub("write_file"), 30)[0] == Verdict.ERROR
+
+
+def test_cli_limits():
+    lim = cli_module.cli_limits(2.5)
+    assert (lim.cpu, lim.file_size, lim.open_files) == (3, 0, 64)
+    assert lim.memory == (256 << 20 if memory_limit_supported() else None)
+    assert cli_module._env()["RAYON_NUM_THREADS"] == "1"
