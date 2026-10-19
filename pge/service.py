@@ -82,6 +82,16 @@ def _stderr_log(rec: dict) -> None:
     print(json.dumps(rec), file=sys.stderr, flush=True)
 
 
+def file_log(path: str | Path) -> Callable[[dict], None]:
+    """Append one JSON line per record, written through at once (for a separate log partition)."""
+    f = open(path, "a", buffering=1, encoding="utf-8")
+
+    def log(rec: dict) -> None:
+        f.write(json.dumps(rec) + "\n")
+
+    return log
+
+
 @dataclass
 class Gate:
     spec: CircuitSpec
@@ -379,6 +389,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--max-pending", type=int, default=32)
     ap.add_argument("--halt-after", type=int)
     ap.add_argument("--proof-bytes", type=int, required=True, help="exact raw proof length (3072 for the test bundles)")
+    ap.add_argument("--log", help="append JSON log lines to this file instead of stderr")
     a = ap.parse_args(argv)
 
     sums = {}
@@ -390,6 +401,7 @@ def main(argv: list[str] | None = None) -> None:
     bundle = Bundle.load(d / "settings.json", d / "vk.key", d / "kzg.srs", pins)
     gate = Gate(spec=bundle.spec, verifier=lambda data, t: verify_bytes_with_cli(bundle, data, a.cli, t),
                 domain=load_domain(a.domain) if a.domain else None,
+                log=file_log(a.log) if a.log else _stderr_log,
                 policy=Policy(deadline=a.deadline, max_pending=a.max_pending, halt_after=a.halt_after,
                               proof_bytes=a.proof_bytes))
 
