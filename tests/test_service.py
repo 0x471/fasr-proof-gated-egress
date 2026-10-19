@@ -1040,3 +1040,73 @@ def test_fixed_release_with_spin_never_releases_early(tiny_bundle):
 def test_bad_spin_is_refused(spin):
     with pytest.raises(ValueError):
         Policy(release="fixed", spin=spin)
+
+
+@pytest.mark.parametrize("spin", [0.0, 0.005, 0.02])
+@pytest.mark.parametrize("sabotaged", [1, 2])
+def test_fixed_release_keeps_admission_order_whatever_the_server_does(tiny_bundle, spin, sabotaged):
+    # Found by review: with spin, a later decided answer used to overtake an earlier silent one.
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.1, release="fixed", spin=spin)
+        order = []
+        gate.submit(1, [TINY_X], lambda m: order.append(gate.wire.parse_reply(m)["id"]))
+        await asyncio.sleep(0.001)
+        gate.submit(2, [TINY_X], lambda m: order.append(gate.wire.parse_reply(m)["id"]))
+        gate.on_answer(sabotaged, outputs, b"\x00")
+        await asyncio.sleep(0.2)
+        assert order == [1, 2]
+    asyncio.run(go())
+
+
+def test_fixed_release_with_spin_wakes_early(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, release="fixed", spin=0.02)
+        loop = asyncio.get_running_loop()
+        delays = []
+        real = loop.call_later
+
+        def spy(delay, cb, *args, **kw):
+            if getattr(cb, "__name__", "") == "_pump":
+                delays.append(delay)
+            return real(delay, cb, *args, **kw)
+        loop.call_later = spy
+        gate.submit(1, [TINY_X], lambda m: None)
+        gate.on_answer(1, outputs, raw)
+        await _settle(gate)
+        await asyncio.sleep(0.4)
+        assert delays and 0.25 < delays[0] < 0.285
+    asyncio.run(go())
+
+
+def test_fixed_release_answers_go_to_their_own_clients(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.2, release="fixed", spin=0.005)
+        a, b = [], []
+        gate.submit(10, [TINY_X], lambda m: a.append(gate.wire.parse_reply(m)))
+        gate.submit(20, [TINY_X], lambda m: b.append(gate.wire.parse_reply(m)))
+        gate.on_answer(2, outputs, raw)
+        gate.on_answer(1, outputs, b"\x00")
+        await asyncio.sleep(0.35)
+        assert [m["id"] for m in a] == [10] and a[0]["ok"] is False
+        assert [m["id"] for m in b] == [20] and b[0]["ok"] is True
+        assert not gate.pending and not gate._held
+    asyncio.run(go())
+
+
+def test_spin_never_blocks_the_loop_for_long(tiny_bundle):
+    # Many answers due a few ms apart: each busy-wait is bounded by spin, and the loop yields between them.
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.2, release="fixed", spin=0.02,
+                                                   max_pending=64)
+        for cid in range(1, 21):
+            gate.submit(cid, [TINY_X], lambda m: None)
+            gate.on_answer(cid, outputs, b"\x00")
+            await asyncio.sleep(0.003)
+        gaps, last = [], time.monotonic()
+        while gate._held or gate.pending:
+            await asyncio.sleep(0)
+            now = time.monotonic()
+            gaps.append(now - last)
+            last = now
+        assert len(records) == 20 and max(gaps) < 0.02 + 0.015
+    asyncio.run(go())
