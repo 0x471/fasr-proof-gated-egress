@@ -19,3 +19,6 @@ spike/stwo-verifier/target/
 
 # Gate scenario outputs (device/pi_scenario.sh)
 runs/
+
+# Built book (mdbook build book)
+book/book/
