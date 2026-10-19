@@ -1,7 +1,8 @@
-"""v0 gate service: forward requests, check every answer's proof, release y or one generic error.
+"""Gate service: forward requests, check every answer's proof, release y or one generic error.
 
-See docs/SERVICE_SPEC.md. This is the baseline: it releases as soon as a check finishes, so
-timing, ordering and failure channels stay open on purpose until v1 and v2.
+See docs/SERVICE_SPEC.md. v1 releases answers in arrival order over fixed-size binary frames
+and logs fixed words only; the timing and failure channels stay open until v2 (fixed release
+time). Policy(release="immediate") gives v0's release behaviour for comparison.
 """
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import struct
 import sys
 import time
 from collections import Counter
@@ -19,8 +21,7 @@ from typing import Callable
 
 from pge.binding import BindingError, CircuitSpec, build_instances, decode_outputs, encode_inputs
 from pge.domain import AffineReluDomain
-from pge.protocol import (CLIENT_MAX, REPLY_MAX, SERVER_MAX, ProtocolError, client_error, client_ok, frame,
-                          parse_client, parse_server, read_frame, server_request)
+from pge.protocol import ProtocolError, Wire, frame, read_frame
 from pge.verdict import MAX_PROOF_BYTES, Verdict
 
 # Takes the proof JSON the device built and a timeout in seconds.
@@ -33,7 +34,7 @@ SERVER_BUFFER_MAX = 1 << 20
 RELEASES = ("arrival", "immediate")
 
 REASONS = frozenset({"request", "proof_length", "binding", "proof", "verifier", "verifier_failed",
-                     "reply_too_large", "closed", "violation", "lost", "protocol", "ids"})
+                     "reply", "closed", "violation", "lost", "protocol", "ids"})
 
 
 def _number(v, lo: float, hi: float) -> bool:
@@ -120,6 +121,9 @@ class Gate:
     _pool: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1))
     _tasks: set = field(default_factory=set)
 
+    def __post_init__(self):
+        self.wire = Wire.for_spec(self.spec)
+
     def _log(self, rec: dict) -> None:
         # A broken log must never stop a request from being answered.
         try:
@@ -158,7 +162,7 @@ class Gate:
 
     def _fail(self, p: _Pending, result: str, reason: str = "", count: bool = True) -> None:
         """Answer unavailable. Failures the server caused count towards halt_after."""
-        self._release(p.seq, p.reply, client_error(p.cid, "unavailable"))
+        self._release(p.seq, p.reply, self.wire.reply_error(p.cid, "unavailable"))
         self._record(result, p, reason)
         if not count:
             return
@@ -183,12 +187,12 @@ class Gate:
             if self.domain is not None:
                 self.domain.check(self.spec, x)
         except (BindingError, TypeError) as e:
-            self._send(reply, client_error(cid, "bad_request"))
+            self._send(reply, self.wire.reply_error(cid, "bad_request"))
             self._record("bad_request", None, "request")
             return
         x_sha256 = hashlib.sha256(json.dumps(encoded).encode()).hexdigest()
         if self.halted or len(self.pending) >= self.policy.max_pending:
-            self._send(reply, client_error(cid, "unavailable"))
+            self._send(reply, self.wire.reply_error(cid, "unavailable"))
             self._record("halted" if self.halted else "busy", None, x_sha256=x_sha256)
             return
         loop = asyncio.get_running_loop()
@@ -202,7 +206,7 @@ class Gate:
             return
         p.timer = loop.call_later(self.policy.deadline, self._expire, p.seq)
         self.pending[p.seq] = p
-        server.write(frame(server_request(p.seq, x)))
+        server.write(frame(self.wire.encode_forward(p.seq, x)))
         if server.transport.get_write_buffer_size() > SERVER_BUFFER_MAX:
             self._record("server_stalled", None)
             server.close()
@@ -276,9 +280,10 @@ class Gate:
         if verdict is not Verdict.ACCEPT:
             self._fail(p, verdict.value, reason)
         else:
-            msg = client_ok(p.cid, y)
-            if len(msg) > REPLY_MAX:
-                self._fail(p, "error", "reply_too_large")
+            try:
+                msg = self.wire.reply_ok(p.cid, y)
+            except (ValueError, struct.error):
+                self._fail(p, "error", "reply")
                 return
             self._release(p.seq, p.reply, msg)
             self._record("accept", p)
@@ -313,10 +318,10 @@ class Gate:
         try:
             while True:
                 try:
-                    data = await asyncio.wait_for(read_frame(reader, CLIENT_MAX), self.policy.idle)
+                    data = await asyncio.wait_for(read_frame(reader, self.wire.request_size), self.policy.idle)
                     if data is None:
                         break
-                    cid, x = parse_client(data)
+                    cid, x = self.wire.parse_request(data)
                 except asyncio.TimeoutError:
                     self._record("client_idle", None)
                     break
@@ -348,10 +353,10 @@ class Gate:
         reason = "closed"
         try:
             while True:
-                data = await read_frame(reader, SERVER_MAX, body_timeout=self.policy.deadline)
+                data = await read_frame(reader, self.wire.answer_max, body_timeout=self.policy.deadline)
                 if data is None:
                     break
-                seq, outputs, proof = parse_server(data)
+                seq, outputs, proof = self.wire.parse_answer(data)
                 self.on_answer(seq, outputs, proof)
         except ProtocolError:
             self._record("server_violation", None)
@@ -398,7 +403,7 @@ def main(argv: list[str] | None = None) -> None:
     from pge.bundle import Bundle, Pins
     from pge.cli import verify_bytes_with_cli
 
-    ap = argparse.ArgumentParser(description="v0 gate service")
+    ap = argparse.ArgumentParser(description="gate service")
     ap.add_argument("--listen", required=True, help="outside address, host:port")
     ap.add_argument("--server", required=True, help="AI server address, host:port")
     ap.add_argument("--bundle", required=True, help="directory with settings.json, vk.key, kzg.srs")
