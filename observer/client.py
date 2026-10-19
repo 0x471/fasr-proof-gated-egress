@@ -2,7 +2,8 @@
 
 Usage: python observer/client.py HOST PORT X_JSON [--n N] [--batch K] > trace.jsonl
 X_JSON is one request's x, e.g. '[[0.5, -0.2, 0.9, 0.1]]'. Each output line is
-{"id", "elapsed_ms", "answer"}; elapsed_ms runs from sending the request to reading its answer.
+{"id", "elapsed_ms", "answer"}, printed as each answer arrives; elapsed_ms (to the microsecond) runs
+from sending the request to reading its answer.
 With --batch K, K requests are sent at once and their answers read in arrival order, so the
 rows show the order in which the gate released them.
 Requests and answers use the gate's binary format (pge/protocol.py); the observer needs no
@@ -23,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pge.protocol import Wire, frame  # noqa: E402
 
 
-async def trace(host: str, port: int, xs: list) -> list[dict]:
+async def trace(host: str, port: int, xs: list, on_row=None) -> list[dict]:
     reader, writer = await asyncio.open_connection(host, port)
     rows = []
     try:
@@ -36,13 +37,15 @@ async def trace(host: str, port: int, xs: list) -> list[dict]:
             if n < 10 or (n - 10) % 8:
                 raise ValueError(f"reply of {n} bytes is not a gate reply")
             answer = Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
-            rows.append({"id": cid, "elapsed_ms": round((time.monotonic() - start) * 1000, 1), "answer": answer})
+            rows.append({"id": cid, "elapsed_ms": round((time.monotonic() - start) * 1000, 3), "answer": answer})
+            if on_row:
+                on_row(rows[-1])
     finally:
         writer.close()
     return rows
 
 
-async def trace_batches(host: str, port: int, xs: list, batch: int) -> list[dict]:
+async def trace_batches(host: str, port: int, xs: list, batch: int, on_row=None) -> list[dict]:
     """Send len(xs) requests in groups of batch, each group at once; rows are in arrival order."""
     reader, writer = await asyncio.open_connection(host, port)
     rows = []
@@ -57,8 +60,10 @@ async def trace_batches(host: str, port: int, xs: list, batch: int) -> list[dict
                 if n < 10 or (n - 10) % 8:
                     raise ValueError(f"reply of {n} bytes is not a gate reply")
                 answer = Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
-                rows.append({"id": answer["id"], "elapsed_ms": round((time.monotonic() - start) * 1000, 1),
+                rows.append({"id": answer["id"], "elapsed_ms": round((time.monotonic() - start) * 1000, 3),
                              "answer": answer})
+                if on_row:
+                    on_row(rows[-1])
     finally:
         writer.close()
     return rows
@@ -75,12 +80,20 @@ def order_index(order: list[int]) -> int:
 
 
 def decode_order_bits(rows: list[dict], batch: int) -> str:
-    """Read floor(log2(batch!)) bits from the order of each full batch of answers."""
+    """Read floor(log2(batch!)) bits from the order of each full batch of answers.
+
+    A batch whose ids aren't exactly batch consecutive ids, or whose order is a permutation the
+    encoder never sends, gives m "?" so later batches stay aligned.
+    """
     m = math.factorial(batch).bit_length() - 1
     out = ""
     for i in range(0, len(rows) - batch + 1, batch):
         ids = [r["id"] for r in rows[i:i + batch]]
-        out += format(order_index([cid - min(ids) for cid in ids]), f"0{m}b")
+        if sorted(ids) != list(range(min(ids), min(ids) + batch)):
+            out += "?" * m
+            continue
+        v = order_index([cid - min(ids) for cid in ids])
+        out += format(v, f"0{m}b") if v < 1 << m else "?" * m
     return out
 
 
@@ -112,9 +125,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--batch", type=int, default=1)
     a = ap.parse_args(argv)
     xs = [json.loads(a.x)] * a.n
-    rows = asyncio.run(trace_batches(a.host, a.port, xs, a.batch) if a.batch > 1 else trace(a.host, a.port, xs))
-    for row in rows:
-        print(json.dumps(row), flush=True)
+    emit = lambda row: print(json.dumps(row), flush=True)
+    asyncio.run(trace_batches(a.host, a.port, xs, a.batch, emit) if a.batch > 1 else trace(a.host, a.port, xs, emit))
 
 
 if __name__ == "__main__":
