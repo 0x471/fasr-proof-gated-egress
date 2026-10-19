@@ -4,11 +4,13 @@ Pi OS has no EZKL Python wheel, so the device runs the pinned CLI binary instead
 Python package. The proof is checked and reduced to its canonical form in memory first,
 as in verdict.verify. The CLI then runs with a minimal environment in its own process
 group, which is killed (SIGKILL) at the deadline or as soon as its output passes 64 KiB
-(pge/proc.py). The verdict is anchored on the exit
-code and the CLI's log lines, as in device/check_verifier.sh.
+(pge/proc.py). It runs with one thread and resource limits (cli_limits): address space
+on Linux, CPU seconds up to the deadline, no file writes, few open files. The verdict is
+anchored on the exit code and the CLI's log lines, as in device/check_verifier.sh.
 
 Limits: the bundle check runs before the deadline starts, and processes the CLI leaves
-behind after a normal exit are not killed.
+behind after a normal exit are not killed. CLI_MEMORY fits the test bundles (the tiny
+bundle needs about 128 MiB with one thread); a larger circuit needs a larger value.
 """
 from __future__ import annotations
 
@@ -20,10 +22,15 @@ from pathlib import Path
 
 from pge.binding import BindingError
 from pge.bundle import Bundle
-from pge.proc import NO_START, TIMEOUT, TOO_LONG, run_bounded
+from pge.proc import NO_START, TIMEOUT, TOO_LONG, Limits, memory_limit_supported, run_bounded
 from pge.verdict import MAX_PROOF_BYTES, Verdict, canonical_proof, read_proof
 
 MAX_OUTPUT_BYTES = 1 << 16
+# Twice what the tiny bundle needs with one thread (measured 16 Oct, brain/measurements).
+CLI_MEMORY = 256 << 20
+CLI_OPEN_FILES = 64
+# Verify writes no files; a CLI that tries to is stopped.
+CLI_FILE_SIZE: int | None = 0
 
 _ERR = re.compile(r"\[E\] \[[^\]]*, ezkl\] - (.*)")
 _VERIFIED = re.compile(r"\[\*\] \[[^\]]*, ezkl::execute\] - verified: (true|false)")
@@ -48,14 +55,20 @@ def classify_cli(rc: int, out: bytes) -> tuple[Verdict, str]:
 
 
 def _env() -> dict[str, str]:
-    env = {"PATH": os.defpath, "LC_ALL": "C"}
+    # One thread: rayon's thread stacks and malloc arenas are what push the address space up.
+    env = {"PATH": os.defpath, "LC_ALL": "C", "RAYON_NUM_THREADS": "1"}
     if "HOME" in os.environ:
         env["HOME"] = os.environ["HOME"]
     return env
 
 
+def cli_limits(timeout: float) -> Limits:
+    return Limits(memory=CLI_MEMORY if memory_limit_supported() else None, cpu=max(1, math.ceil(timeout)),
+                  file_size=CLI_FILE_SIZE, open_files=CLI_OPEN_FILES)
+
+
 def _run(argv: list[str], timeout: float) -> tuple[Verdict, str]:
-    status, rc, out = run_bounded(argv, timeout, MAX_OUTPUT_BYTES, env=_env())
+    status, rc, out = run_bounded(argv, timeout, MAX_OUTPUT_BYTES, env=_env(), limits=cli_limits(timeout))
     if status == NO_START:
         return Verdict.ERROR, f"cannot start cli: {out.decode(errors='replace')}"
     if status == TIMEOUT:
