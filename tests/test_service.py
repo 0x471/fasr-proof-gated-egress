@@ -953,3 +953,51 @@ def test_order_bits_leak_only_without_arrival_order(tiny_bundle, verifier, relea
         assert decode_order_bits(rows, batch) == (bits if leaked else "0" * len(bits))
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "order_bits", bits=bits, batch=batch),
               policy=Policy(deadline=5, release=release))
+
+
+# Fixed release: every admitted answer leaves at admission + deadline, whatever the server does.
+
+def test_fixed_release_sends_every_answer_at_its_deadline(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, release="fixed")
+        loop = asyncio.get_running_loop()
+        sent = []
+        t0 = time.monotonic()
+        for cid in (1, 2, 3, 4):
+            gate.submit(cid, [TINY_X], lambda m: sent.append((gate.wire.parse_reply(m), time.monotonic() - t0)))
+        gate.on_answer(2, outputs, raw)
+        gate.on_answer(3, outputs, b"\x00")
+        loop.call_later(0.15, gate.on_answer, 4, outputs, raw)
+        await asyncio.sleep(0.5)
+        assert [(m["id"], m["ok"]) for m, _ in sent] == [(1, False), (2, True), (3, False), (4, True)]
+        assert all(0.3 <= t < 0.36 for _, t in sent)
+        assert [r["result"] for r in records] == ["deadline", "accept", "reject", "accept"]
+        assert not gate.pending and not gate._held
+    asyncio.run(go())
+
+
+def test_fixed_release_revokes_held_successes_on_halt(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, halt_after=1, release="fixed")
+        got = []
+        for cid in (1, 2):
+            gate.submit(cid, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
+        gate.on_answer(1, outputs, raw)
+        await _settle(gate)
+        gate.on_answer(2, outputs, b"\x00")
+        await asyncio.sleep(0.4)
+        assert [m["ok"] for m in got] == [False, False] and gate.halted
+    asyncio.run(go())
+
+
+def test_fixed_release_hides_the_timing_bits(tiny_bundle, verifier):
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import trace
+
+    async def t(st):
+        port = st.servers[1].sockets[0].getsockname()[1]
+        rows = await trace("127.0.0.1", port, [[TINY_X]] * 6)
+        ms = [r["elapsed_ms"] for r in rows]
+        assert all(r["answer"]["ok"] for r in rows) and max(ms) - min(ms) < 60
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "timing_bits", bits="101101", slot=0.4),
+              policy=Policy(deadline=1.0, release="fixed"))
