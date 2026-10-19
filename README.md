@@ -2,7 +2,9 @@
 
 A hardened, off-the-shelf device that lets AI outputs leave a datacenter only if they carry a valid zero-knowledge proof. Threat model, measurements and guidance for frontier AI labs.
 
-Built during ERA's Frontier AI Security Residency (FASR), October to December 2026.
+This work was supported by ERA's Frontier AI Security Residency (October to December 2026).
+
+The write-up (design, threat model, attack catalogue, results) is a book in `book/`: build it with [mdBook](https://github.com/rust-lang/mdBook) 0.5.4, `mdbook build book`, then open `book/book/index.html`.
 
 > Early work in progress. Nothing here is production security. Claims are limited to what the tests and measurements show.
 
@@ -26,7 +28,7 @@ flowchart LR
     E --> U
 ```
 
-The device only listens on the outside. It connects to the server itself, although that connection still carries hostile data. The service (`pge/service.py`, `docs/SERVICE_SPEC.md`) releases answers in arrival order (v1 software; `--release immediate` is v0's behaviour); the fixed release time is v2 target behaviour.
+The device only listens on the outside. It connects to the server itself, although that connection still carries hostile data. The service (`pge/service.py`, `docs/SERVICE_SPEC.md`) releases answers in arrival order by default (v1 software); `--release immediate` is v0's behaviour and `--release fixed` sends every answer at admission + deadline.
 
 ## Request path
 
@@ -77,7 +79,11 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `tests/` | Unit tests, differential tests against EZKL's own encoding and witness generation, end-to-end verification |
 | `tests/fixtures/` | Two pinned bundles: `tiny` (y = ReLU(xW + b), 4 to 3, with its input domain in `domain.json`) and `multi` (two inputs, two outputs, scales 13 and 26) |
 | `prover/` | Build and prove the test circuits with EZKL; tamper checks; `server.py`, the laptop AI server, honest or misbehaving |
-| `observer/client.py` | The outside observer: sends requests to the gate and records each answer with its time (for the side-channel experiments) |
+| `observer/client.py` | The outside observer: sends requests to the gate (one at a time or in batches) and records each answer with its time; decoders for the timing, ordering and failure-position channels |
+| `observer/analyze_matrix.py`, `observer/jitter_test.py`, `observer/order_experiment.py` | Summarise a release-policy run; test whether residual jitter follows planted bits; the ordering channel on localhost |
+| `device/pi_scenario.sh`, `device/pi_matrix.sh` | Run one gate scenario on the Pi (prover and observer on this machine), or the release-policy x channel matrix |
+| `device/verify_cost.py` | What one gate check costs on the device, and how reliably the CLI runs under each memory limit |
+| `book/` | The write-up as an mdBook; its pages include the files in `docs/` |
 | `device/verify_on_pi.sh` | Stage the pinned tiny bundle and run the device checks on the Pi over SSH, or locally on Linux with `HOST=local` |
 | `device/check_verifier.sh` | The device checks: fetch the pinned EZKL CLI, check accept and reject cases, time verification |
 | `spike/stwo-verifier/` | Spike: a pinned S-two (Cairo) verifier on StarkWare's stwo-cairo `sharp-7.4`: size caps, pinned security parameters and program hash, 55 cases (`check.sh`), deterministic fixtures (`prove.sh`) |
@@ -107,7 +113,7 @@ python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main
   --cli ./ezkl --domain tests/fixtures/tiny/domain.json --proof-bytes 3072 [--log gate.log] [--release immediate]
 ```
 
-`OUTSIDE_IP` is the outside interface's own address; don't use `0.0.0.0`, which listens on every interface. `BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. `prover/server.py --mode` makes the server misbehave (see its docstring). Run on the Pi on 16 Oct with the v0 software (below); the v1 software has not run on the Pi yet.
+`OUTSIDE_IP` is the outside interface's own address; don't use `0.0.0.0`, which listens on every interface. `BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. `prover/server.py --mode` makes the server misbehave (see its docstring). Run on the Pi on 16 Oct with the v0 software and on 19 Oct with the v1 software (below).
 
 ## Measured so far
 
@@ -119,6 +125,9 @@ python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main
 | Gate on the Pi (v0 software), prover on the laptop, one request | Pi 4 + M4 Pro over Ethernet, 16 Oct | 0.9 to 1.05 s per answer (mostly proving); y matches the float model within quantisation |
 | Misbehaving server against the gate on the Pi (v0 software, 16 Oct) | tamper, replay, duplicate, wrong seq, garbage, oversize | blocked or dropped as specified |
 | Timing leak through v0 (16 bits, 1 s slots) | Pi gate | 16 of 16 bits decoded from answer times; honest answers vary by 81 ms |
+| Gate on the Pi (v1 software), one check | Pi 4, 19 Oct | 239 ms for the full check (one thread, limits); 163 ms raw CLI with one thread, 97 ms with four |
+| Release policies on the Pi (16 bits per channel, 4 s budget) | Pi gate, 19 Oct | timing 16/16 leaked under immediate and arrival, chance under fixed; ordering 16/16 under immediate only; failure position 16/16 under every policy; fixed costs 4.0 s per answer (0.8 s otherwise) |
+| Residual timing under fixed release (128 bits + honest control) | Pi gate, 19 Oct | 0.66 ms shift follows the server's delays (p < 0.0001; control p = 0.13); about 0.14-0.19 bit per answer held-out |
 | Open TCP ports seen from the laptop (nmap) | Pi, v0 | 22 (ssh), 8700 (gate) |
 | Raw proof size | | 3072 bytes |
 | S-two proof (binary), verify with all pins, n = 20 | laptop (M4 Pro) | 455-870 KB; median 36-65 ms per process, 9-15 MB peak RSS (`spike/stwo-verifier`) |
