@@ -4,7 +4,8 @@ on:
     paths: ["book/**", "docs/**", ".github/workflows/book.yml"]
   pull_request:
     paths: ["book/**", "docs/**", ".github/workflows/book.yml"]
-  # Deploying to GitHub Pages is manual until the repository is public.
+  # Deploying to GitHub Pages is manual: on this plan a Pages site is public to anyone with the URL.
+  # For a private copy, use book/deploy-cloudflare.sh (see book/DEPLOY.md).
   workflow_dispatch:
 permissions:
   contents: read
