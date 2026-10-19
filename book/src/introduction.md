@@ -3,7 +3,7 @@
 > **In short**
 > - A small computer (a Raspberry Pi) sits between an AI server and the outside world. It lets an answer out only if a cryptographic proof shows the approved model produced it from that exact question.
 > - That stops a hacked server from changing **what** an answer says. It doesn't stop it from signalling through **when** answers leave, **in what order**, or **which ones fail**.
-> - We measured those three signals on the real device and found ways to close two of them. The third, deliberate failures, is still open.
+> - We measured those three signals on the real device, one client at a time. Release rules stopped the ordering and timing codes we tried (timing at a cost in speed, and with a small trace left); deliberate failures still get through.
 
 This work was supported by ERA's Frontier AI Security Residency. It is work in progress (October 2026), not production security.
 
@@ -25,12 +25,12 @@ We call the Pi running the checking software **the gate**.
 
 | Way to smuggle data out | Basic gate | Best gate so far | What it costs |
 |---|---|---|---|
-| Change what an answer says | Blocked by the proof | Blocked | Nothing |
-| Reorder answers | Leaks | **Closed**: answers leave in the order questions arrived | A slow answer delays the ones behind it |
-| Delay answers | Leaks | **Almost closed**: every answer leaves at a fixed time | Answers take 4 s instead of 0.8 s |
+| Change what an answer says | Blocked by the proof | Blocked | Each check takes about 0.24 s on the Pi |
+| Reorder answers | Leaks | **The ordering code we tried no longer gets through**: answers leave in the order questions arrived | A slow answer delays the ones behind it |
+| Delay answers | Leaks | **Much reduced**: every answer leaves at a set time; a small trace remains | Answers take 4 s instead of 0.8 s |
 | Fail chosen answers on purpose | Leaks | **Still leaks** | Open problem |
 
-Details and numbers are in [What a hacked server can still leak](leakage.md).
+These are results for one tiny, deterministic test model and the encoders we tried, not limits on what an attacker could do. Details and numbers are in [What a hacked server can still leak](leakage.md).
 
 ## Status
 
