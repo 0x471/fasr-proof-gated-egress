@@ -84,6 +84,16 @@ def decode_order_bits(rows: list[dict], batch: int) -> str:
     return out
 
 
+def decode_failure_position(rows: list[dict], batch: int) -> str:
+    """Read log2(batch) bits per full batch from which answer failed; "?" when not exactly one did."""
+    k = batch.bit_length() - 1
+    out = ""
+    for i in range(0, len(rows) - batch + 1, batch):
+        failed = [j for j, r in enumerate(rows[i:i + batch]) if not r["answer"]["ok"]]
+        out += format(failed[0], f"0{k}b") if len(failed) == 1 else "?" * k
+    return out
+
+
 def decode_bits(rows: list[dict]) -> str:
     """Split answer times at the widest gap: a 1 is a slow answer. For known-bit experiments only."""
     ms = [r["elapsed_ms"] for r in rows]
