@@ -907,3 +907,17 @@ def test_held_answers_go_to_their_own_clients(tiny_bundle):
         assert not gate.pending and not gate._held
         assert [r["seq"] for r in records] == [1, 2]
     asyncio.run(go())
+
+
+def test_halt_on_the_earliest_request_revokes_later_held_successes(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=5, halt_after=1)
+        got = []
+        for cid in (1, 2):
+            gate.submit(cid, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
+        gate.on_answer(2, outputs, raw)
+        await _settle(gate)
+        gate.on_answer(1, outputs, b"\x00")
+        await _settle(gate)
+        assert [m["ok"] for m in got] == [False, False] and gate.halted
+    asyncio.run(go())
