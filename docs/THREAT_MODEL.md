@@ -94,9 +94,28 @@ Status for v0 in the last column. "Open" means the channel is not closed in this
 | Persuade an operator to approve a bad update or model (Gigurtsis 5.2.2, 5.6.8) | Update process | Not addressed in v0; separate keys and 2-of-3 update signing in v2 |
 | Learn the device's policy by probing (Gigurtsis 5.1.4) | Policy | Generic errors; failure alerts planned |
 
-## 8. References
+## 8. Mapping to MITRE ATLAS
+
+ATLAS release 2026.09 (`mitre-atlas/atlas-data`, `dist/v6/ATLAS-2026.09.yaml`: 16 tactics, 208 techniques, 40 mitigations, 73 case studies). ATLAS describes adversaries attacking AI systems, mostly from outside or through the supply chain. Our main attacker is the inference host itself (A1, A2) trying to get data out through a device that only releases verified answers. **No ATLAS technique covers leaking through the timing, order or failure pattern of valid outputs from a compromised inference host** (searched names and descriptions for covert, side channel, timing, latency, steganography). The closest are the generic Exfiltration via Cyber Means, which defers to ATT&CK, and the goal AI Intellectual Property Theft. Gigurtsis's loss-of-control matrix (technique 5.4.1) is the closer fit and is cited per row in `ATTACKS.md`.
+
+| ATLAS | Name | Our rows | Note |
+|---|---|---|---|
+| AML.T0048.004 | AI Intellectual Property Theft (Impact) | the goal of A1/A2 (section 1) | the asset is the weights |
+| AML.T0025 | Exfiltration via Cyber Means | K8, K18, K28, K19, section 6 | generic; our channels are a gap in ATLAS |
+| AML.T0024.002 | Extract AI Model | K26 | out of scope |
+| AML.T0018 | Manipulate AI Model | K3 | a proof under another circuit's key is rejected (pinned vk) |
+| AML.T0010.001 / .003 | AI Supply Chain Compromise: AI Software / Model | section 7 (substituted verifier binary, swapped bundle) | digest pins; v1 bakes both into the image |
+| AML.T0029 | Denial of AI Service | K16, K17, K23 | partly by design (halt, busy) |
+| AML.T0034.001 | Resource-Intensive Queries | K15, K29 | analogous: crafted proofs rather than queries |
+
+Not in ATLAS at all: request binding and proof-format attacks on the verifier (K1-K7, K30, K31), release timing, order and failure position, and packet metadata.
+
+ATLAS mitigations we use: AML.M0014 Verify AI Artifacts (bundle pins), AML.M0013 Code Signing (v2 signed updates, secure boot), AML.M0036 Limit AI Workload Resource Consumption (verifier limits, deadlines), AML.M0004 Limit AI Service Query Volume and Rate (`max_pending`, `max_clients`), AML.M0024 AI Telemetry Logging (fixed-word logs; here the log is itself a channel, section 6), AML.M0035 AI Red Team (W6 sessions).
+
+## 9. References
 
 - Project plan, side-channel table and three versions (shared with mentor and RM).
 - Gigurtsis, *From Discovery to Persistence: A Loss-of-Control Threat Matrix for Agentic AI* (2026), https://github.com/bgigurtsis/AgenticLoCThreatMatrix
 - Rinberg et al., *Verifying LLM Inference to Detect Model Weight Exfiltration* (2025), https://arxiv.org/abs/2511.02620
 - Lampson, *A Note on the Confinement Problem* (1973); Murdoch and Lewis, *Embedding Covert Channels into TCP/IP* (2005).
+- MITRE ATLAS, release 2026.09, https://atlas.mitre.org/ (data: https://github.com/mitre-atlas/atlas-data)
