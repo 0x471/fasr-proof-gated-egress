@@ -26,7 +26,7 @@ flowchart LR
     E --> U
 ```
 
-The device only listens on the outside. It connects to the server itself, although that connection still carries hostile data. The v0 service (`pge/service.py`, `docs/SERVICE_SPEC.md`) releases as soon as a check passes; the fixed release time is v2 target behaviour.
+The device only listens on the outside. It connects to the server itself, although that connection still carries hostile data. The service (`pge/service.py`, `docs/SERVICE_SPEC.md`) releases answers in arrival order (v1 software; `--release immediate` is v0's behaviour); the fixed release time is v2 target behaviour.
 
 ## Request path
 
@@ -67,11 +67,11 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `pge/domain.py` | Input domain of an affine + ReLU circuit, so impossible requests are refused up front |
 | `pge/verdict.py` | Turn a verify call into ACCEPT, REJECT or ERROR |
 | `pge/worker.py` | Run one verify in a child process with a deadline |
-| `pge/protocol.py` | The service's wire format: length-prefixed JSON frames, strict parsing |
-| `pge/service.py` | The v0 gate service: one bundle, at most one answer per request, the decoded output or an error that never carries server-chosen text |
+| `pge/protocol.py` | The service's wire format: length-prefixed binary frames of fixed size for the pinned circuit, strict parsing |
+| `pge/service.py` | The gate service: one bundle, at most one answer per request, released in arrival order; the decoded output or an error that never carries server-chosen text; logs with fixed words only |
 | `pge/cli.py` | Verify with EZKL's official CLI (no Python package exists for Pi OS), with a deadline on its whole process group |
 | `docs/BINDING_SPEC.md` | The binding rules, pitfalls and test vectors |
-| `docs/SERVICE_SPEC.md` | The v0 service: messages, request lifecycle, failure policy, replay |
+| `docs/SERVICE_SPEC.md` | The gate service (v1 software): frames, messages, request lifecycle and arrival-order release, failure policy, verifier limits, replay, logs |
 | `docs/THREAT_MODEL.md` | Threat model v0: assets, attackers, assumptions, the v0 attack surface, side channels and their status |
 | `docs/ATTACKS.md` | Known-attacks catalogue: every attack tried, its result and the test that covers it |
 | `tests/` | Unit tests, differential tests against EZKL's own encoding and witness generation, end-to-end verification |
@@ -96,7 +96,7 @@ The verification tests need the pinned SRS. They use `prover/artifacts/kzg.srs` 
 
 `tests/test_cli.py` runs `pge/cli.py` against stub CLIs, and against the real CLI when `PGE_EZKL_CLI` points to it (CI does this). `tests/test_device_script.py` runs the device checks against a stub CLI and only runs on Linux. CI also runs `device/verify_on_pi.sh` with `HOST=local` and EZKL's x86_64 Linux CLI.
 
-## Running the v0 service
+## Running the gate service
 
 On the laptop, start the AI server, then the gate (with EZKL's CLI on Linux):
 
@@ -104,7 +104,7 @@ On the laptop, start the AI server, then the gate (with EZKL's CLI on Linux):
 .venv/bin/python prover/server.py --listen 127.0.0.1:8701
 python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main; main()' \
   --listen OUTSIDE_IP:8700 --server 127.0.0.1:8701 --bundle BUNDLE_DIR --pins device/tiny.sha256 \
-  --cli ./ezkl --domain tests/fixtures/tiny/domain.json --proof-bytes 3072
+  --cli ./ezkl --domain tests/fixtures/tiny/domain.json --proof-bytes 3072 [--log gate.log] [--release immediate]
 ```
 
 `OUTSIDE_IP` is the outside interface's own address; don't use `0.0.0.0`, which listens on every interface. `BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. `prover/server.py --mode` makes the server misbehave (see its docstring). Run on the Pi on 16 Oct (below).
