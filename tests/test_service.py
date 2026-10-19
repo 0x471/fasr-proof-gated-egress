@@ -726,3 +726,71 @@ def test_file_log_appends_lines(tmp_path):
     log({"result": "reject", "reason": "proof"})
     assert [json.loads(l) for l in path.read_text().splitlines()] == [
         {"result": "accept", "seq": 1}, {"result": "reject", "reason": "proof"}]
+
+
+# Arrival-order release (v1).
+
+class Reversed(Server):
+    """Collects n requests, then answers them in reverse order."""
+
+    def __init__(self, prover, n=2, skip=()):
+        super().__init__(prover)
+        self.n, self.skip = n, set(skip)
+
+    async def handle(self, reader, writer):
+        got = []
+        try:
+            while len(got) < self.n:
+                data = await read_frame(reader, 4096)
+                if data is None:
+                    return
+                got.append(loads(data))
+            for msg in reversed(got):
+                if msg["seq"] in self.skip:
+                    continue
+                outputs, proof = self.prover.prove(msg["x"])
+                await self._send(writer, msg["seq"], outputs, proof)
+            await asyncio.sleep(30)
+        finally:
+            writer.close()
+
+
+@pytest.mark.parametrize("release, first", [("arrival", 1), ("immediate", 2)])
+def test_answers_leave_in_arrival_order(tiny_bundle, verifier, release, first):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        c.send(2, [TINY_X])
+        got = [await c.recv(), await c.recv()]
+        assert [m["id"] for m in got][0] == first and all(m["ok"] for m in got)
+    run_stack(tiny_bundle, verifier, t, server=Reversed(FakeProver(tiny_bundle.spec)),
+              policy=Policy(deadline=5, release=release))
+
+
+def test_held_answer_waits_only_for_the_earlier_deadline(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        start = time.monotonic()
+        c.send(1, [TINY_X])
+        c.send(2, [TINY_X])
+        first, second = await c.recv(), await c.recv()
+        assert first == {"id": 1, "ok": False, "error": "unavailable"} and second == {"id": 2, "ok": True, "y": Y}
+        assert 0.9 < time.monotonic() - start < 3
+        assert st.results() == ["accept", "deadline"]
+    run_stack(tiny_bundle, verifier, t, server=Reversed(FakeProver(tiny_bundle.spec), skip={1}),
+              policy=Policy(deadline=1))
+
+
+def test_failures_are_released_in_order_too(tiny_bundle, verifier):
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        c.send(2, OTHER_X)
+        got = [await c.recv(), await c.recv()]
+        assert got == [{"id": 1, "ok": True, "y": Y}, {"id": 2, "ok": False, "error": "unavailable"}]
+    run_stack(tiny_bundle, verifier, t, server=Reversed(FakeProver(tiny_bundle.spec)))
+
+
+def test_bad_release_policy_is_refused():
+    with pytest.raises(ValueError):
+        Policy(release="random")
