@@ -80,6 +80,7 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `observer/client.py` | The outside observer: sends requests to the gate and records each answer with its time (for the side-channel experiments) |
 | `device/verify_on_pi.sh` | Stage the pinned tiny bundle and run the device checks on the Pi over SSH, or locally on Linux with `HOST=local` |
 | `device/check_verifier.sh` | The device checks: fetch the pinned EZKL CLI, check accept and reject cases, time verification |
+| `spike/stwo-verifier/` | Spike: a pinned S-two (Cairo) verifier on StarkWare's stwo-cairo `sharp-7.4`: size caps, pinned security parameters and program hash, 55 cases (`check.sh`), deterministic fixtures (`prove.sh`) |
 | `image/build.sh`, `image/v1.fragment` | Build the device image with Buildroot 2025.02.18 LTS (digest-pinned) on a Linux host: the Pi 4 defconfig plus glibc and Python. Work in progress towards v1 |
 | `device/measure.sh` | Attack-surface snapshot for every version: packages, running services, processes, listening sockets, hashes of config and tools |
 
@@ -120,6 +121,8 @@ python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main
 | Timing leak through v0 (16 bits, 1 s slots) | Pi gate | 16 of 16 bits decoded from answer times; honest answers vary by 81 ms |
 | Open TCP ports seen from the laptop (nmap) | Pi, v0 | 22 (ssh), 8700 (gate) |
 | Raw proof size | | 3072 bytes |
+| S-two proof (binary), verify with all pins, n = 20 | laptop (M4 Pro) | 455-870 KB; median 36-65 ms per process, 9-15 MB peak RSS (`spike/stwo-verifier`) |
+| S-two proof with 2-bit security parameters | laptop | accepted by stwo-cairo's own `verify` CLI; rejected by the pinned verifier |
 | Tampered input, output and proof bytes | laptop | rejected |
 | Tampered input, output, garbage file | Raspberry Pi | rejected (non-zero exit) |
 
