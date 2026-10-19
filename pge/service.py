@@ -1,8 +1,9 @@
 """Gate service: forward requests, check every answer's proof, release y or one generic error.
 
 See docs/SERVICE_SPEC.md. v1 releases answers in arrival order over fixed-size binary frames
-and logs fixed words only. Policy(release="fixed") sends every answer at admission + deadline,
-which hides the server's timing; the failure channel stays open. Policy(release="immediate")
+and logs fixed words only. Policy(release="fixed") sends answers in admission order, each no
+earlier than admission + deadline, which hides most of the server's timing; the failure channel
+stays open. Policy(release="immediate")
 gives v0's release behaviour for comparison.
 """
 from __future__ import annotations
@@ -56,8 +57,8 @@ class Policy:
     max_clients: int = 64
     idle: float = 60.0
     # "arrival": answers leave in the order requests were admitted, so the server can't choose
-    # the order. "immediate" (v0) releases each answer as soon as it is decided. "fixed": every
-    # admitted answer leaves at admission + deadline, so the server can't choose when either.
+    # the order. "immediate" (v0) releases each answer as soon as it is decided. "fixed": answers
+    # also wait until admission + deadline, so the server can't choose when they leave either.
     release: str = "arrival"
     # Fixed release only: wake this many seconds early and busy-wait until the release time, so
     # the timer's wake-up latency doesn't depend on how long the device was idle.
@@ -471,7 +472,7 @@ def main(argv: list[str] | None = None) -> None:
                     help="fixed release: wake this many ms early and busy-wait until the release time")
     ap.add_argument("--release", default="arrival", choices=RELEASES,
                     help="arrival: answers leave in request order (default); immediate: as decided (v0); "
-                         "fixed: each answer at admission + deadline")
+                         "fixed: in order, each no earlier than admission + deadline")
     a = ap.parse_args(argv)
 
     sums = {}
