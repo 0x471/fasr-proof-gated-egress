@@ -54,6 +54,8 @@ B=$(python3 -c "import random; r=random.Random(20261019); print(''.join(r.choice
 OUT=runs/fixed_long DEADLINE=4 device/pi_scenario.sh timing_fixed_long fixed 128 1 -- --mode timing_bits --bits $B --slot 1.0
 OUT=runs/fixed_long DEADLINE=4 device/pi_scenario.sh honest_fixed_long fixed 128 1 -- --mode honest
 python3 observer/jitter_test.py runs/fixed_long/timing_fixed_long.trace.jsonl $B --control runs/fixed_long/honest_fixed_long.trace.jsonl
+python3 observer/estimate.py runs/fixed_long/timing_fixed_long.trace.jsonl $B --control runs/fixed_long/honest_fixed_long.trace.jsonl
+python3 observer/estimate.py --selftest      # the estimator on synthetic channels with known values
 ```
 
 ## Server modes

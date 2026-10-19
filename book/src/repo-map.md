@@ -33,6 +33,7 @@
 | `observer/client.py` | The outside observer: sends questions, records each answer and its time, decodes hidden bits |
 | `observer/analyze_matrix.py` | Summarises a release-rule experiment |
 | `observer/jitter_test.py` | Tests whether leftover timing differences follow the server's hidden bits |
+| `observer/estimate.py` | Estimates leakage as mutual information (bits per answer), with a null and an interval; `--selftest` checks it on synthetic channels |
 | `observer/order_experiment.py` | The ordering experiment on one machine |
 
 ## Running on the Pi (`device/`)
