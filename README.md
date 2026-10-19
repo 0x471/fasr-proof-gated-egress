@@ -70,11 +70,11 @@ Each version is measured the same way: reachable services, trusted code size, ve
 | `pge/verdict.py` | Turn a verify call into ACCEPT, REJECT or ERROR |
 | `pge/worker.py` | Run one verify in a child process with a deadline |
 | `pge/protocol.py` | The service's wire format: length-prefixed binary frames of fixed size for the pinned circuit, strict parsing |
-| `pge/service.py` | The gate service: one bundle, at most one answer per request, released in arrival order; the decoded output or an error that never carries server-chosen text; logs with fixed words only |
+| `pge/service.py` | The gate service: one bundle, at most one answer per request, released in arrival order (default), as decided (v0) or at a fixed time; the decoded output or an error that never carries server-chosen text; logs with fixed words only |
 | `pge/cli.py` | Verify with EZKL's official CLI (no Python package exists for Pi OS), with a deadline on its whole process group |
 | `docs/BINDING_SPEC.md` | The binding rules, pitfalls and test vectors |
 | `docs/SERVICE_SPEC.md` | The gate service (v1 software): frames, messages, request lifecycle and arrival-order release, failure policy, verifier limits, replay, logs |
-| `docs/THREAT_MODEL.md` | Threat model v0: assets, attackers, assumptions, the v0 attack surface, side channels and their status |
+| `docs/THREAT_MODEL.md` | Threat model: assets, attackers, trust boundaries, assumptions, the v0 attack surface, side channels and their status, the MITRE ATLAS mapping |
 | `docs/ATTACKS.md` | Known-attacks catalogue: every attack tried, its result and the test that covers it |
 | `tests/` | Unit tests, differential tests against EZKL's own encoding and witness generation, end-to-end verification |
 | `tests/fixtures/` | Two pinned bundles: `tiny` (y = ReLU(xW + b), 4 to 3, with its input domain in `domain.json`) and `multi` (two inputs, two outputs, scales 13 and 26) |
