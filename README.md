@@ -24,12 +24,12 @@ A valid proof stops the server from changing **what** an answer says. It doesn't
 
 | Way to smuggle data out | Basic gate | Best gate so far | What it costs |
 |---|---|---|---|
-| Change what an answer says | Blocked by the proof | Blocked | Nothing |
-| Reorder answers | Leaks | **Closed**: answers leave in the order questions arrived | A slow answer delays the ones behind it |
-| Delay answers | Leaks | **Almost closed**: every answer leaves at a fixed time | Answers take 4 s instead of 0.8 s |
+| Change what an answer says | Blocked by the proof | Blocked | Each check takes about 0.24 s on the Pi |
+| Reorder answers | Leaks | **The ordering code we tried no longer gets through**: answers leave in the order questions arrived | A slow answer delays the ones behind it |
+| Delay answers | Leaks | **Much reduced**: every answer leaves at a set time; a small trace remains | Answers take 4 s instead of 0.8 s |
 | Fail chosen answers on purpose | Leaks | **Still leaks** | Open problem |
 
-All measured on a real Raspberry Pi 4. Of the 32 attacks tried so far, 22 are stopped, 2 are allowed on purpose, 6 still work or are only partly stopped, and 2 are out of scope.
+Measured on a real Raspberry Pi 4 with one client at a time and one tiny test model; the rates are for the encoders we tried, not limits on what an attacker could do. The attack catalogue has 34 scenarios, each with its evidence: 23 stopped, 2 allowed on purpose, 7 still work, are only partly stopped or are untested, 2 out of scope. The counts describe coverage, not a security score.
 
 ## Status
 
