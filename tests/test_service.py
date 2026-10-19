@@ -12,7 +12,7 @@ import pytest
 
 from conftest import ROOT, TINY, TINY_X
 from pge.binding import split_instances
-from pge.protocol import frame, loads, read_frame
+from pge.protocol import REQUEST, Wire, frame, read_frame
 from pge.service import REASONS, Gate, Policy, file_log, load_domain
 from pge.verdict import Verdict
 
@@ -27,6 +27,7 @@ class FakeProver:
     """Answers every request with the pinned tiny proof, which is only valid for TINY_X."""
 
     def __init__(self, spec):
+        self.spec = spec
         proof = json.loads((TINY / "proof.json").read_text())
         self.outputs = split_instances(spec, proof["instances"])[1]
         self.raw = bytes(proof["proof"])
@@ -47,18 +48,18 @@ def py_verifier(bundle, ezkl):
 
 
 class Client:
-    def __init__(self, reader, writer):
-        self.r, self.w = reader, writer
+    def __init__(self, reader, writer, wire):
+        self.r, self.w, self.wire = reader, writer, wire
 
     def send(self, cid, x):
-        self.w.write(frame(json.dumps({"id": cid, "x": x}).encode()))
+        self.w.write(frame(Wire(tuple(len(t) for t in x), ()).encode_request(cid, x)))
 
     def send_raw(self, payload: bytes):
         self.w.write(payload)
 
     async def recv(self, timeout=10.0):
         data = await asyncio.wait_for(read_frame(self.r, 1 << 16), timeout)
-        return None if data is None else loads(data)
+        return None if data is None else self.wire.parse_reply(data)
 
     async def nothing_within(self, seconds):
         try:
@@ -74,7 +75,7 @@ class Stack:
 
     async def client(self):
         port = self.servers[1].sockets[0].getsockname()[1]
-        return Client(*await asyncio.open_connection("127.0.0.1", port))
+        return Client(*await asyncio.open_connection("127.0.0.1", port), self.gate.wire)
 
     def results(self):
         return [r["result"] for r in self.records]
@@ -248,19 +249,32 @@ def test_bad_requests_never_reach_the_server(tiny_bundle, verifier):
 
     async def t(st):
         c = await st.client()
-        for cid, x in enumerate(([[0.5, -0.2, 0.9]], [TINY_X, TINY_X], [[1e30, 0, 0, 0]], [[-3.25, 7.0, 1e-6, -0.0]])):
+        for cid, x in enumerate(([[1e30, 0, 0, 0]], [[-3.25, 7.0, 1e-6, -0.0]])):
             c.send(cid, x)
             assert await c.recv() == {"id": cid, "ok": False, "error": "bad_request"}
-        assert st.server.requests == [] and st.results() == ["bad_request"] * 4
+        assert st.server.requests == [] and st.results() == ["bad_request"] * 2
+        # A request of the wrong shape is the wrong size, so it breaks the protocol.
+        for x in ([[0.5, -0.2, 0.9]], [TINY_X, TINY_X]):
+            d = await st.client()
+            d.send(9, x)
+            assert await d.recv() is None
+        assert st.server.requests == [] and st.results()[2:] == ["client_violation"] * 2
     run_stack(tiny_bundle, verifier, t, domain=domain)
 
 
+def _req(cid, vals, kind=REQUEST):
+    return struct.pack(">BQ", kind, cid) + struct.pack(f">{len(vals)}d", *vals)
+
+
 @pytest.mark.parametrize("payload", [
-    frame(b'{"id": 1, "x": [[1, 2, 3, 4]], "id": 2}'),
-    frame(b'{"id": 1, "x": [[1, 2, 3, 4]], "seq": 5}'),
+    frame(_req(1, [1, 2, 3, 4])[:-1]),
+    frame(_req(1, [1, 2, 3, 4]) + b"\x00"),
+    frame(_req(1, [1, 2, 3, 4], kind=2)),
     frame(b"nope"),
     struct.pack(">I", 1 << 20),
-    frame(b'{"id": 1, "x": [[NaN, 0, 0, 0]]}'),
+    frame(_req(1, [float("nan"), 0, 0, 0])),
+    frame(_req(1, [float("inf"), 0, 0, 0])),
+    frame(_req(1 << 53, [1, 2, 3, 4])),
 ])
 def test_client_violation_closes_the_connection(tiny_bundle, verifier, payload):
     async def t(st):
@@ -430,7 +444,7 @@ def test_service_main_with_the_real_cli(real_cli_path, tiny_bundle, srs_path, tm
         try:
             for _ in range(200):
                 try:
-                    c = Client(*await asyncio.open_connection("127.0.0.1", port))
+                    c = Client(*await asyncio.open_connection("127.0.0.1", port), Wire.for_spec(tiny_bundle.spec))
                     break
                 except OSError:
                     await asyncio.sleep(0.05)
@@ -483,7 +497,7 @@ def test_broken_log_still_answers(tiny_bundle, verifier):
         link = asyncio.create_task(gate.link("127.0.0.1", s1.sockets[0].getsockname()[1]))
         while gate._server is None:
             await asyncio.sleep(0.01)
-        c = Client(*await asyncio.open_connection("127.0.0.1", s2.sockets[0].getsockname()[1]))
+        c = Client(*await asyncio.open_connection("127.0.0.1", s2.sockets[0].getsockname()[1]), gate.wire)
         c.send(1, [TINY_X])
         assert await c.recv() == {"id": 1, "ok": True, "y": Y}
         c.send(2, OTHER_X)
@@ -686,13 +700,15 @@ def test_observer_recovers_the_timing_bits(tiny_bundle, verifier):
 def test_log_records_hold_no_server_text(tiny_bundle, verifier):
     class Counted(FakeProver):
         def prove(self, x):
-            return [self.outputs[0] * 7], self.raw  # the count of output values is server-chosen
+            # In v0 the number of output values was the server's choice; here the frame fixes
+            # it, so the extra values are read as proof bytes and the proof fails.
+            return [self.outputs[0] * 7], self.raw
 
     async def t(st):
         c = await st.client()
         c.send(1, [TINY_X])
         assert (await c.recv())["ok"] is False
-        assert st.records[0]["result"] == "reject" and st.records[0]["reason"] == "binding"
+        assert st.records[0]["result"] == "reject" and st.records[0]["reason"] == "proof"
         for rec in st.records:
             assert set(rec) <= {"result", "reason", "seq", "x_sha256", "ms", "failures"}
             assert "reason" not in rec or rec["reason"] in REASONS
@@ -741,15 +757,15 @@ class Reversed(Server):
         got = []
         try:
             while len(got) < self.n:
-                data = await read_frame(reader, 4096)
+                data = await read_frame(reader, self.wire.request_size)
                 if data is None:
                     return
-                got.append(loads(data))
-            for msg in reversed(got):
-                if msg["seq"] in self.skip:
+                got.append(self.wire.parse_forward(data))
+            for seq, x in reversed(got):
+                if seq in self.skip:
                     continue
-                outputs, proof = self.prover.prove(msg["x"])
-                await self._send(writer, msg["seq"], outputs, proof)
+                outputs, proof = self.prover.prove(x)
+                await self._send(writer, seq, outputs, proof)
             await asyncio.sleep(30)
         finally:
             writer.close()
