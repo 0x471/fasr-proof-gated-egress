@@ -26,7 +26,7 @@ from pge.proc import NO_START, TIMEOUT, TOO_LONG, Limits, memory_limit_supported
 from pge.verdict import MAX_PROOF_BYTES, Verdict, canonical_proof, read_proof
 
 MAX_OUTPUT_BYTES = 1 << 16
-# Twice what the tiny bundle needs with one thread (measured 16 Oct, brain/measurements).
+# Twice what the tiny bundle needs with one thread (about 128 MiB, measured on Linux 16 and 19 Oct).
 CLI_MEMORY = 256 << 20
 CLI_OPEN_FILES = 64
 # Verify writes no files; a CLI that tries to is stopped.
