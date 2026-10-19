@@ -59,6 +59,9 @@ class Policy:
     # the order. "immediate" (v0) releases each answer as soon as it is decided. "fixed": every
     # admitted answer leaves at admission + deadline, so the server can't choose when either.
     release: str = "arrival"
+    # Fixed release only: wake this many seconds early and busy-wait until the release time, so
+    # the timer's wake-up latency doesn't depend on how long the device was idle.
+    spin: float = 0.0
 
     def __post_init__(self):
         if not _number(self.deadline, 0, 3600):
@@ -73,6 +76,8 @@ class Policy:
             raise ValueError(f"proof_bytes must be an integer in [1, {PROOF_MAX}] or None")
         if self.release not in RELEASES:
             raise ValueError(f"release must be one of {', '.join(RELEASES)}")
+        if isinstance(self.spin, bool) or not isinstance(self.spin, (int, float)) or not 0 <= self.spin <= 0.05:
+            raise ValueError("spin must be a number of seconds in [0, 0.05]")
 
 
 @dataclass
@@ -165,7 +170,7 @@ class Gate:
             return
         self._held[p.seq] = (p, msg, result, reason)
         if self.policy.release == "fixed":
-            delay = p.due - time.monotonic()
+            delay = p.due - time.monotonic() - self.policy.spin
             if delay > 0:
                 asyncio.get_running_loop().call_later(delay, self._release_at_deadline, p.seq)
             else:
@@ -185,6 +190,8 @@ class Gate:
 
     def _release_at_deadline(self, seq: int) -> None:
         p, msg, result, reason = self._held.pop(seq)
+        while self.policy.spin and time.monotonic() < p.due:
+            pass
         if result == "accept" and self.halted:
             msg, result, reason = self.wire.reply_error(p.cid, "unavailable"), "halted", ""
         self._send(p.reply, msg)
@@ -444,6 +451,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--halt-after", type=int)
     ap.add_argument("--proof-bytes", type=int, required=True, help="exact raw proof length (3072 for the test bundles)")
     ap.add_argument("--log", help="append JSON log lines to this file instead of stderr")
+    ap.add_argument("--spin-ms", type=float, default=0.0,
+                    help="fixed release: wake this many ms early and busy-wait until the release time")
     ap.add_argument("--release", default="arrival", choices=RELEASES,
                     help="arrival: answers leave in request order (default); immediate: as decided (v0); "
                          "fixed: each answer at admission + deadline")
@@ -460,7 +469,7 @@ def main(argv: list[str] | None = None) -> None:
                 domain=load_domain(a.domain) if a.domain else None,
                 log=file_log(a.log) if a.log else _stderr_log,
                 policy=Policy(deadline=a.deadline, max_pending=a.max_pending, halt_after=a.halt_after,
-                              proof_bytes=a.proof_bytes, release=a.release))
+                              proof_bytes=a.proof_bytes, release=a.release, spin=a.spin_ms / 1000))
 
     async def run() -> None:
         host, port = _addr(a.listen)
