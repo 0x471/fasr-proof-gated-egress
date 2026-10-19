@@ -13,7 +13,7 @@ import pytest
 from conftest import ROOT, TINY, TINY_X
 from pge.binding import split_instances
 from pge.protocol import frame, loads, read_frame
-from pge.service import REASONS, Gate, Policy, load_domain
+from pge.service import REASONS, Gate, Policy, file_log, load_domain
 from pge.verdict import Verdict
 
 sys.path.insert(0, str(ROOT / "prover"))
@@ -718,3 +718,11 @@ def test_unknown_reason_is_logged_as_other(tiny_bundle, verifier):
     gate._record("error", None, "server said 0xdeadbeef")
     assert records == [{"result": "error", "reason": "other"}]
 
+
+def test_file_log_appends_lines(tmp_path):
+    path = tmp_path / "gate.log"
+    log = file_log(path)
+    log({"result": "accept", "seq": 1})
+    log({"result": "reject", "reason": "proof"})
+    assert [json.loads(l) for l in path.read_text().splitlines()] == [
+        {"result": "accept", "seq": 1}, {"result": "reject", "reason": "proof"}]
