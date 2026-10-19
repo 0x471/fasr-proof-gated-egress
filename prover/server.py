@@ -1,7 +1,7 @@
-"""Laptop AI server for the v0 gate: prove each request with EZKL, honestly or not.
+"""Laptop AI server for the gate: prove each request with EZKL, honestly or not.
 
-The device connects here. Each request {"seq", "x"} is proved with the pinned tiny bundle
-and answered {"seq", "outputs", "proof"} (docs/SERVICE_SPEC.md). --mode makes the server
+The device connects here. Each forwarded request (seq, x) is proved with the pinned tiny
+bundle and answered with (seq, outputs, proof) in the binary format (docs/SERVICE_SPEC.md). --mode makes the server
 misbehave, for the service tests and as the start of the W4 malicious-prover harness:
 
   honest           prove and answer
@@ -12,7 +12,7 @@ misbehave, for the service tests and as the start of the W4 malicious-prover har
   duplicate        answer twice
   wrong_seq        answer with a seq that was never issued
   oversize         send a frame over the device's limit
-  garbage          send a frame that isn't JSON
+  garbage          send a frame that isn't a well-formed answer
   timing_bits      hide --bits in the answer times: delay by --slot seconds for a 1
 
 Usage: python prover/server.py --listen 127.0.0.1:8701 [--mode honest]
@@ -33,8 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from pge.binding import CircuitSpec, split_instances  # noqa: E402
-from pge.protocol import (SERVER_MAX, ProtocolError, dumps, frame, loads,  # noqa: E402
-                          read_frame)
+from pge.protocol import ProtocolError, Wire, frame, read_frame  # noqa: E402
 
 TINY = ROOT / "tests" / "fixtures" / "tiny"
 TINY_SETTINGS_SHA256 = "b4a95fc7c572816034708c4e5c079f0f91f82eb9681cfa069565aacc9887aefd"
@@ -80,10 +79,6 @@ class Prover:
         return outputs, bytes(proof["proof"])
 
 
-def answer(seq: int, outputs: list, proof: bytes) -> bytes:
-    return dumps({"seq": seq, "outputs": outputs, "proof": proof.hex()})
-
-
 class Server:
     def __init__(self, prover, mode: str = "honest", delay: float = 0.0, bits: str = "", slot: float = 0.2):
         if mode not in MODES:
@@ -91,6 +86,7 @@ class Server:
         if set(bits) - {"0", "1"}:
             raise ValueError("bits must be a string of 0 and 1")
         self.prover, self.mode, self.delay, self.bits, self.slot = prover, mode, delay, bits, slot
+        self.wire = Wire.for_spec(prover.spec)
         self.previous: tuple[list, bytes] | None = None
         self.sent = 0
         self.requests: list[dict] = []
@@ -100,12 +96,11 @@ class Server:
         loop = asyncio.get_running_loop()
         try:
             while True:
-                data = await read_frame(reader, 4096)
+                data = await read_frame(reader, self.wire.request_size)
                 if data is None:
                     break
-                msg = loads(data)
-                self.requests.append(msg)
-                seq, x = msg["seq"], msg["x"]
+                seq, x = self.wire.parse_forward(data)
+                self.requests.append({"seq": seq, "x": x})
                 try:
                     outputs, proof = await loop.run_in_executor(self.pool, self.prover.prove, x)
                 except Exception as e:
@@ -113,7 +108,7 @@ class Server:
                     continue
                 await self._send(writer, seq, outputs, proof)
                 self.previous = (outputs, proof)
-        except (ProtocolError, ConnectionError, KeyError, TypeError):
+        except (ProtocolError, ConnectionError):
             pass
         finally:
             writer.close()
@@ -134,11 +129,11 @@ class Server:
         if m == "wrong_seq":
             seq += 1000
         if m == "oversize":
-            payload = b" " * (SERVER_MAX + 1)
+            payload = b" " * (self.wire.answer_max + 1)
         elif m == "garbage":
-            payload = b"not json"
+            payload = b"not an answer"
         else:
-            payload = answer(seq, outputs, proof)
+            payload = self.wire.encode_answer(seq, outputs, proof)
         writer.write(frame(payload))
         if m == "duplicate":
             writer.write(frame(payload))
