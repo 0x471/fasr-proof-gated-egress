@@ -12,6 +12,20 @@ uv pip install --python .venv/bin/python "ezkl==23.0.5" onnx numpy pytest
 
 The verification tests need the pinned setup file (SRS). They use `prover/artifacts/kzg.srs` or `$PGE_SRS` if present, otherwise download it with EZKL and check its hash. Linux-only tests (the address-space limit, the device script) are skipped on macOS; CI runs them on Linux with EZKL's real CLI.
 
+## Run the gate yourself
+
+Start the AI server, then the gate. The gate calls EZKL's command-line tool `ezkl` (version 23.0.5); it has been tested on Linux, and on macOS the memory cap is skipped because macOS doesn't support it.
+
+```sh
+.venv/bin/python prover/server.py --listen 127.0.0.1:8701
+python3 -I -c 'import sys; sys.path.insert(0, "."); from pge.service import main; main()' \
+  --listen OUTSIDE_IP:8700 --server 127.0.0.1:8701 --bundle BUNDLE_DIR --pins device/tiny.sha256 \
+  --cli ./ezkl --domain tests/fixtures/tiny/domain.json --proof-bytes 3072 \
+  [--release arrival|immediate|fixed] [--deadline SECONDS] [--spin-ms MS] [--log gate.log]
+```
+
+`OUTSIDE_IP` is the outside interface's own address; don't use `0.0.0.0`, which listens on every interface. `BUNDLE_DIR` holds `settings.json`, `vk.key` and `kzg.srs`. Send questions with `observer/client.py`.
+
 ## The ordering channel on one machine
 
 ```sh
