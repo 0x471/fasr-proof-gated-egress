@@ -1,27 +1,36 @@
 #!/usr/bin/env bash
 # Deploy the book to Cloudflare Pages, behind Cloudflare Access (only listed emails can read it).
 # Usage from the repo root:
-#   book/deploy-cloudflare.sh placeholder   # first: create the project with an empty page
-#   (lock both hostnames with Cloudflare Access, see book/DEPLOY.md, then check in a private window)
-#   book/deploy-cloudflare.sh book          # refuses unless the production hostname redirects to Access
+#   CF_ACCESS_TEAM=<team> book/deploy-cloudflare.sh placeholder   # first: an empty page
+#   (lock both hostnames with Cloudflare Access, see book/DEPLOY.md, and audit them by hand)
+#   CF_ACCESS_TEAM=<team> book/deploy-cloudflare.sh book          # refuses unless they redirect to Access
 # Needs: Node (npx), `npx wrangler@4.147.0 login` done once, and mdBook 0.5.4 as `mdbook` or $MDBOOK.
+# The checks here are a smoke test, not an audit of the Access policies; see book/DEPLOY.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 WRANGLER="npx --yes wrangler@4.147.0"
 PROJECT="${CF_PAGES_PROJECT:-proof-gated-egress}"
-HOST="${CF_PAGES_HOST:-$PROJECT.pages.dev}"
+TEAM="${CF_ACCESS_TEAM:?set CF_ACCESS_TEAM to your Zero Trust team name (<team>.cloudflareaccess.com)}"
 MDBOOK="${MDBOOK:-mdbook}"
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
+[[ "$PROJECT" =~ ^[a-z0-9-]+$ && "$TEAM" =~ ^[a-z0-9-]+$ ]] || { echo "bad project or team name" >&2; exit 2; }
 
+# The production hostname must be one Cloudflare reports for this project, not a free-standing setting.
+host() {
+  local h="${CF_PAGES_HOST:-$PROJECT.pages.dev}"
+  $WRANGLER pages project list | grep -w "$PROJECT" | grep -qF "$h" || { echo "$h is not a domain of project $PROJECT" >&2; return 1; }
+  echo "$h"
+}
+
+# Locked: an unauthenticated request is redirected to this team's Access login for this hostname.
 locked() {
-  # Locked means the page itself doesn't load for an unauthenticated request: Access answers
-  # with a redirect to the team's login page (or 401/403), never with the content (200).
   local out code loc
-  out="$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 15 "https://$HOST/")" || return 1
+  out="$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 15 "https://$1/")" || return 1
   code="${out%% *}"; loc="${out#* }"
-  [[ "$code" != 200 ]] && { [[ "$loc" == *".cloudflareaccess.com/"* ]] || [[ "$code" == 401 || "$code" == 403 ]]; }
+  local login="https://$TEAM.cloudflareaccess.com/cdn-cgi/access/login/$1"
+  [[ "$code" == 302 || "$code" == 303 ]] && [[ "$loc" == "$login" || "$loc" == "$login?"* || "$loc" == "$login/"* ]]
 }
 
 case "${1:-}" in
@@ -29,19 +38,29 @@ case "${1:-}" in
     $WRANGLER pages project list | grep -qw "$PROJECT" || $WRANGLER pages project create "$PROJECT" --production-branch main
     printf '<!doctype html><title>Private</title><p>Nothing here.</p>\n' > "$OUT/index.html"
     $WRANGLER pages deploy "$OUT" --project-name "$PROJECT" --branch main
-    echo "Placeholder deployed. Now lock https://$HOST and its previews with Access (book/DEPLOY.md)."
+    echo "Placeholder deployed. Now lock the production hostname and the previews with Access (book/DEPLOY.md)."
     ;;
   book)
-    if ! locked; then
-      echo "https://$HOST does not redirect to Cloudflare Access. Lock it first (book/DEPLOY.md); not deploying." >&2
+    HOST="$(host)"
+    if ! locked "$HOST"; then
+      echo "https://$HOST does not redirect to $TEAM's Access login. Lock it first (book/DEPLOY.md); not deploying." >&2
       exit 1
     fi
-    MDBOOK_OUTPUT__HTML__SITE_URL=/ "$MDBOOK" build book -d "$OUT"
-    $WRANGLER pages deploy "$OUT" --project-name "$PROJECT" --branch main
-    locked && echo "Deployed behind Access: https://$HOST" || { echo "WARNING: https://$HOST is not behind Access after deploy" >&2; exit 1; }
+    MDBOOK_OUTPUT__HTML__SITE_URL=/ "$MDBOOK" build book -d "$OUT/site"
+    $WRANGLER pages deploy "$OUT/site" --project-name "$PROJECT" --branch main | tee "$OUT/deploy.log"
+    # Each upload also gets its own address (<hash>.<project>.pages.dev); it must be locked too.
+    DEPLOYMENT="$(grep -oE 'https://[a-z0-9-]+\.[a-z0-9.-]+\.pages\.dev' "$OUT/deploy.log" | head -1 | sed 's|https://||' || true)"
+    for h in "$HOST" ${DEPLOYMENT:+"$DEPLOYMENT"}; do
+      if ! locked "$h"; then
+        echo "WARNING: https://$h is not behind Access. Delete this deployment in the dashboard now." >&2
+        exit 1
+      fi
+    done
+    [[ -n "$DEPLOYMENT" ]] || { echo "WARNING: couldn't find this deployment's own address to check; check it by hand." >&2; exit 1; }
+    echo "Deployed behind Access: https://$HOST (this upload: https://$DEPLOYMENT)"
     ;;
   *)
-    echo "usage: $0 placeholder|book" >&2
+    echo "usage: CF_ACCESS_TEAM=<team> $0 placeholder|book" >&2
     exit 2
     ;;
 esac
