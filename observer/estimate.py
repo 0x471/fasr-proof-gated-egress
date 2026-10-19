@@ -3,7 +3,7 @@
 Usage: python3 observer/estimate.py TRACE.jsonl BITS [--bins 4] [--control HONEST.jsonl]
        python3 observer/estimate.py --selftest
 
-Answer times are cut into equal-count bins; I(bit; bin) is estimated with the plug-in formula
+Answer times are cut into bins at their quantiles (equal times share a bin); I(bit; bin) is estimated with the plug-in formula
 and the Miller-Madow bias correction, and compared with a shuffled-label null (the same
 estimate after randomly reassigning the bits) and a bootstrap interval. The bits are uniform
 and independent by construction, so I(bit; bin) is what one answer reveals to an observer who
@@ -39,11 +39,10 @@ def mi_plugin(xs: list[int], ys: list[int], kx: int, ky: int) -> float:
 
 
 def binned(ms: list[float], bins: int) -> list[int]:
-    order = sorted(range(len(ms)), key=lambda i: ms[i])
-    out = [0] * len(ms)
-    for rank, i in enumerate(order):
-        out[i] = rank * bins // len(ms)
-    return out
+    """Bin by value: edges at the quantiles, and equal times always share a bin."""
+    s = sorted(ms)
+    edges = [s[k * len(s) // bins] for k in range(1, bins)]
+    return [sum(v > e for e in edges) for v in ms]
 
 
 def estimate(bits: list[int], ms: list[float], bins: int, perms: int = 2000, boots: int = 1000, seed: int = 1) -> dict:
