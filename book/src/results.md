@@ -102,6 +102,17 @@ A longer run (128 random bits, plus 128 honest requests as a control) asked whet
 
 A threshold decoder tuned on one half of the run and tested on the other gets 25 % and 28 % of bits wrong. Read as a binary symmetric channel (which assumes independent errors), that is about **0.14-0.19 bit per answer**, about 0.04 bit/s at a 4 s budget, against 0.69 bit/s for v0's timing channel. So fixed release cuts timing leakage by roughly 15-20x, not to zero. One hypothesis was that the server's delay changes how long the device idles before the release timer fires, which shifts its wake-up time. Waking 5 ms early and busy-waiting until the release time (`--spin-ms 5`) removes the average shift: the spin run looks like its honest control. A held-out decoder still got 34 % wrong on one half and 44 % on the other (the controls: 39-59 %), and only about 1 % of random relabellings do as well as 34 %, so a weaker residue may remain. A larger run is needed to settle it.
 
+A second, independent measure (`observer/estimate.py`): the mutual information between the hidden bit and the answer time, with answer times cut into 4 equal-count bins, a small-sample bias correction, a shuffled-label null and a bootstrap interval. It was first checked on synthetic channels with known values (`tests/test_estimate.py`). Binning can only lose information, so it tends to undercount.
+
+| Run (n = 128) | Mutual information, bit per answer | 95 % interval | p |
+|---|---|---|---|
+| Fixed release, server encoding bits | 0.20 | 0.09 to 0.35 | 0.0005 |
+| Fixed release, honest server | about 0 | up to 0.06 | 0.75 |
+| Fixed release with spin, server encoding bits | 0.016 | up to 0.12 | 0.13 |
+| Fixed release with spin, honest server | about 0 | up to 0.06 | 0.41 |
+
+The no-spin value agrees with the held-out decoder (0.14-0.19). With spin nothing is detected, but 128 answers can't rule out up to about 0.12 bit per answer.
+
 ## What these results don't show
 
 - One device, one network, one sequential client (ordering used concurrent requests on one connection). Several clients, other loads and packet-level observation (sizes, TCP behaviour) are not measured yet.
