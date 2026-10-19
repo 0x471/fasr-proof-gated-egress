@@ -204,7 +204,7 @@ class Gate:
             self._record("bad_request", None, "request")
             return
         x_sha256 = hashlib.sha256(json.dumps(encoded).encode()).hexdigest()
-        if self.halted or len(self.pending) >= self.policy.max_pending:
+        if self.halted or len(self.pending) + len(self._held) >= self.policy.max_pending:
             self._send(reply, self.wire.reply_error(cid, "unavailable"))
             self._record("halted" if self.halted else "busy", None, x_sha256=x_sha256)
             return
