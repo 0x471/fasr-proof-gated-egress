@@ -13,7 +13,7 @@ import pytest
 from conftest import ROOT, TINY, TINY_X
 from pge.binding import split_instances
 from pge.protocol import frame, loads, read_frame
-from pge.service import Gate, Policy, load_domain
+from pge.service import REASONS, Gate, Policy, load_domain
 from pge.verdict import Verdict
 
 sys.path.insert(0, str(ROOT / "prover"))
@@ -535,8 +535,7 @@ def test_server_violation_detail_is_fixed_text(tiny_bundle, verifier):
         c = await st.client()
         c.send(1, [TINY_X])
         assert (await c.recv())["ok"] is False
-        assert [r for r in st.records if r["result"] == "server_violation"] == [
-            {"result": "server_violation", "detail": "malformed frame or answer"}]
+        assert [r for r in st.records if r["result"] == "server_violation"] == [{"result": "server_violation"}]
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "oversize"))
 
 
@@ -680,3 +679,42 @@ def test_observer_recovers_the_timing_bits(tiny_bundle, verifier):
         assert [r["id"] for r in rows] == list(range(len(bits))) and all(r["answer"]["ok"] for r in rows)
         assert decode_bits(rows) == bits
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "timing_bits", bits=bits, slot=0.5))
+
+
+# Logs carry fixed words only (v1).
+
+def test_log_records_hold_no_server_text(tiny_bundle, verifier):
+    class Counted(FakeProver):
+        def prove(self, x):
+            return [self.outputs[0] * 7], self.raw  # the count of output values is server-chosen
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is False
+        assert st.records[0]["result"] == "reject" and st.records[0]["reason"] == "binding"
+        for rec in st.records:
+            assert set(rec) <= {"result", "reason", "seq", "x_sha256", "ms", "failures"}
+            assert "reason" not in rec or rec["reason"] in REASONS
+    run_stack(tiny_bundle, verifier, t, server=Server(Counted(tiny_bundle.spec)))
+
+
+def test_proof_length_reason_hides_the_length(tiny_bundle, verifier):
+    class Padded(FakeProver):
+        def prove(self, x):
+            return self.outputs, self.raw + b"\x00" * 123
+
+    async def t(st):
+        c = await st.client()
+        c.send(1, [TINY_X])
+        assert (await c.recv())["ok"] is False
+        assert st.records[0]["reason"] == "proof_length" and "123" not in json.dumps(st.records)
+    run_stack(tiny_bundle, verifier, t, server=Server(Padded(tiny_bundle.spec)), policy=Policy(deadline=5, proof_bytes=3072))
+
+
+def test_unknown_reason_is_logged_as_other(tiny_bundle, verifier):
+    records = []
+    gate = Gate(spec=tiny_bundle.spec, verifier=verifier, log=records.append)
+    gate._record("error", None, "server said 0xdeadbeef")
+    assert records == [{"result": "error", "reason": "other"}]
+
