@@ -1,6 +1,6 @@
-# Threat model v0
+# Threat model
 
-Living document: started in W2, updated after each version and each adversarial-testing session, final in W7. v0 is the baseline, so most rows below say what is still open.
+Living document: started in W2, updated after each version and each adversarial-testing session, final in W7. Status as of 19 Oct 2026: v0 measured on the Pi, the v1 software (including fixed release) measured on the Pi on the v0 OS; the v1 and v2 images are not built yet.
 
 ## 1. What the device protects
 
@@ -53,18 +53,18 @@ A proof shows that `y` came from the pinned model on this `x`. It does nothing a
 
 For real LLMs, any freedom the proof doesn't pin (sampling seed, temperature, unproven layers) becomes a channel with valid proofs. The test model is deterministic; who chooses the seed is an open question for the mentor.
 
-## 5. v0 attack surface (measured on the Pi, 11 and 13 Oct)
+## 5. v0 attack surface (measured on the Pi, 11, 13 and 16 Oct)
 
-- Raspberry Pi OS Lite (Debian 13), 633 installed packages, 15 running system services.
+- Raspberry Pi OS Lite (Debian 13), 633 installed packages, 13 to 15 running system services (the count depends on what has run since boot: 15 on 11 Oct, 13 on 16 Oct).
 - Listening: sshd (TCP 22) and avahi (mDNS on UDP 5353 plus two random UDP ports), on IPv4 and IPv6. The gate adds its own listener on link 1.
 - Verifier: EZKL's official 36 MB CLI (it also contains the prover and setup code), run by `pge/cli.py`.
 - Updates: files copied over SSH.
 
-`device/measure.sh` records the same local items for every version (packages, running services, processes, listening sockets, hashes of the boot config and of any files passed to it). A tool that fails makes the run invalid instead of reporting zero. It is a local snapshot only: what is reachable from each port is measured separately, from outside (planned: nmap from the laptop on each interface).
+`device/measure.sh` records the same local items for every version (packages, running services, processes, listening sockets, hashes of the boot config and of any files passed to it). A tool that fails makes the run invalid instead of reporting zero. It is a local snapshot only: what is reachable is measured separately, from outside. From the laptop on 16 Oct: TCP 22 (ssh) and 8700 (the gate), UDP 5353 (mDNS). The first v1 development image (16 Oct, no gate running yet): 0 of 65,535 TCP ports open, the top 100 UDP ports closed, no IPv6.
 
 ## 6. Side channels a compromised server controls
 
-Status for v0 in the last column. "Open" means the channel is not closed in this version.
+Status as of 19 Oct in the last column. "Open" means the channel is not closed by any software version yet.
 
 | Channel | How A1/A2 uses it | Planned defence (version) | v0 |
 |---|---|---|---|
@@ -73,7 +73,7 @@ Status for v0 in the last column. "Open" means the channel is not closed in this
 | Whether an answer arrives | Fail on purpose: bad proofs, drops, resets, missed deadlines | One generic error; failure threshold and response (v1, v2). With timing fixed, still up to 1 bit per request, and a sparse failure's position carries log2 N bits per block of N | **Open, shown on the Pi (K32):** 4 failures in 64 answers carried 16 bits under every release policy. One server-independent error string; failures are counted, and `halt_after` stops all releases (pending and held ones included), off by default |
 | Sizes and packet metadata | Response length, TCP segmentation, header fields | The device builds every outgoing packet itself; fixed-size responses (v1, v2) | Partly: in the v1 software every reply frame has one size and the server can't choose the number of output values; the OS's TCP stack (segmentation, headers) is still stock |
 | Answer content | Pick among valid answers or encodings | One pinned model, the device's own encoding, canonical values, `y` decoded from verified values, proof never released | **Closed for the test bundle:** binding and service tests |
-| Verification time | Proofs that are slow to verify or crash the verifier | Fixed proof size; verification budget; separate worker with a deadline | Partly: CLI killed at the deadline (`pge/cli.py`), but answer time still depends on it |
+| Verification time | Proofs that are slow to verify or crash the verifier | Fixed proof size; verification budget; separate worker with a deadline | Partly: CLI killed at the deadline (`pge/cli.py`). With arrival or immediate release the answer time still depends on it; with fixed release it doesn't, except for the residual shift (K8), and a check that runs out of budget is `unavailable` |
 | Device outputs | Smuggle data into logs, alerts or errors | Logs hold hashes and results only, exported one way; one generic error text | Partly: clients only see two error strings. In the v1 software log records hold fixed words, the device's `seq`, the client's request hash, `ms` and (for a halt) the failure count (no error text, no proof hash), to stderr or a file for a log partition; the number and timing of log events still follow the server. Who reads the log is undefined |
 | Busy answers | Hold requests open to fill `max_pending`, so other clients get `unavailable` | Fixed slots (v2) | Open: depends on load |
 
