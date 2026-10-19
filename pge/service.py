@@ -21,8 +21,8 @@ from typing import Callable
 
 from pge.binding import BindingError, CircuitSpec, build_instances, decode_outputs, encode_inputs
 from pge.domain import AffineReluDomain
-from pge.protocol import ProtocolError, Wire, frame, read_frame
-from pge.verdict import MAX_PROOF_BYTES, Verdict
+from pge.protocol import PROOF_MAX, ProtocolError, Wire, frame, read_frame
+from pge.verdict import Verdict
 
 # Takes the proof JSON the device built and a timeout in seconds.
 Verifier = Callable[[bytes, float], "tuple[Verdict, str]"]
@@ -67,8 +67,8 @@ class Policy:
             raise ValueError("max_pending and max_clients must be integers in [1, 4096]")
         if self.halt_after is not None and not _count(self.halt_after, 1, 1 << 30):
             raise ValueError("halt_after must be a positive integer or None")
-        if self.proof_bytes is not None and not _count(self.proof_bytes, 1, MAX_PROOF_BYTES):
-            raise ValueError("proof_bytes must be a positive integer or None")
+        if self.proof_bytes is not None and not _count(self.proof_bytes, 1, PROOF_MAX):
+            raise ValueError(f"proof_bytes must be an integer in [1, {PROOF_MAX}] or None")
         if self.release not in RELEASES:
             raise ValueError(f"release must be one of {', '.join(RELEASES)}")
 
