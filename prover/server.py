@@ -16,6 +16,8 @@ misbehave, for the service tests and as the start of the W4 malicious-prover har
   timing_bits      hide --bits in the answer times: delay by --slot seconds for a 1
   order_bits       hide --bits in the order of each --batch answers: floor(log2(batch!)) bits
                    per batch, as the index of a permutation
+  fail_position    hide --bits in which answer of each --batch fails (tampered output, so the
+                   gate rejects it): log2(batch) bits per batch, one failure per batch
 
 Usage: python prover/server.py --listen 127.0.0.1:8701 [--mode honest]
 """
@@ -42,7 +44,7 @@ TINY = ROOT / "tests" / "fixtures" / "tiny"
 TINY_SETTINGS_SHA256 = "b4a95fc7c572816034708c4e5c079f0f91f82eb9681cfa069565aacc9887aefd"
 TINY_VK_SHA256 = "34ab48a8ac0946be4faf10d85699ac729adb20ec4c6251da1d1d0d4ea18a4d26"
 MODES = ("honest", "drop", "delay", "tamper_output", "replay", "duplicate", "wrong_seq", "oversize", "garbage",
-         "timing_bits", "order_bits")
+         "timing_bits", "order_bits", "fail_position")
 
 
 def bits_per_batch(k: int) -> int:
@@ -102,8 +104,10 @@ class Server:
             raise ValueError(f"unknown mode {mode!r}")
         if set(bits) - {"0", "1"}:
             raise ValueError("bits must be a string of 0 and 1")
-        if type(batch) is not int or not 2 <= batch <= 8:
-            raise ValueError("batch must be an integer in [2, 8]")
+        if type(batch) is not int or not 2 <= batch <= (1024 if mode == "fail_position" else 8):
+            raise ValueError("batch must be an integer in [2, 8], or a power of 2 up to 1024 for fail_position")
+        if mode == "fail_position" and batch & (batch - 1):
+            raise ValueError("batch must be a power of 2 for fail_position")
         self.prover, self.mode, self.delay, self.bits, self.slot = prover, mode, delay, bits, slot
         self.batch = batch
         self.held: list[tuple[int, list, bytes]] = []
@@ -156,6 +160,12 @@ class Server:
             await asyncio.sleep(self.delay)
         if m == "timing_bits" and self.sent < len(self.bits) and self.bits[self.sent] == "1":
             await asyncio.sleep(self.slot)
+        if m == "fail_position":
+            k = self.batch.bit_length() - 1
+            block, pos = divmod(self.sent, self.batch)
+            chunk = self.bits[block * k:(block + 1) * k].ljust(k, "0")
+            if pos == int(chunk, 2):
+                m = "tamper_output"
         if m == "tamper_output":
             first = outputs[0][0]
             outputs = [[("1" if first[0] == "0" else "0") + first[1:]] + outputs[0][1:]] + outputs[1:]
