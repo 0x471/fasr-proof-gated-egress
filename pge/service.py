@@ -30,6 +30,8 @@ Verifier = Callable[[bytes, float], "tuple[Verdict, str]"]
 SERVER_BUFFER_MAX = 1 << 20
 
 # Every reason a log record can give. Anything else is logged as "other".
+RELEASES = ("arrival", "immediate")
+
 REASONS = frozenset({"request", "proof_length", "binding", "proof", "verifier", "verifier_failed",
                      "reply_too_large", "closed", "violation", "lost", "protocol", "ids"})
 
@@ -51,6 +53,9 @@ class Policy:
     proof_bytes: int | None = None
     max_clients: int = 64
     idle: float = 60.0
+    # "arrival": answers leave in the order requests were admitted, so the server can't choose
+    # the order. "immediate" (v0) releases each answer as soon as it is decided.
+    release: str = "arrival"
 
     def __post_init__(self):
         if not _number(self.deadline, 0, 3600):
@@ -63,6 +68,8 @@ class Policy:
             raise ValueError("halt_after must be a positive integer or None")
         if self.proof_bytes is not None and not _count(self.proof_bytes, 1, MAX_PROOF_BYTES):
             raise ValueError("proof_bytes must be a positive integer or None")
+        if self.release not in RELEASES:
+            raise ValueError(f"release must be one of {', '.join(RELEASES)}")
 
 
 @dataclass
@@ -105,6 +112,9 @@ class Gate:
     clients: int = 0
     counts: Counter = field(default_factory=Counter)
     pending: dict[int, _Pending] = field(default_factory=dict)
+    # Decided answers waiting for every earlier seq to be released (arrival order).
+    _held: dict[int, Callable[[], None]] = field(default_factory=dict)
+    _next_release: int = 1
     _server: asyncio.StreamWriter | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _pool: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1))
@@ -136,9 +146,19 @@ class Gate:
         except Exception:
             pass
 
+    def _release(self, seq: int, reply: Callable[[bytes], None], msg: bytes) -> None:
+        """Send the answer for an admitted request, in seq order unless release is immediate."""
+        if self.policy.release == "immediate":
+            self._send(reply, msg)
+            return
+        self._held[seq] = lambda: self._send(reply, msg)
+        while self._next_release in self._held:
+            self._held.pop(self._next_release)()
+            self._next_release += 1
+
     def _fail(self, p: _Pending, result: str, reason: str = "", count: bool = True) -> None:
         """Answer unavailable. Failures the server caused count towards halt_after."""
-        self._send(p.reply, client_error(p.cid, "unavailable"))
+        self._release(p.seq, p.reply, client_error(p.cid, "unavailable"))
         self._record(result, p, reason)
         if not count:
             return
@@ -260,7 +280,7 @@ class Gate:
             if len(msg) > REPLY_MAX:
                 self._fail(p, "error", "reply_too_large")
                 return
-            self._send(p.reply, msg)
+            self._release(p.seq, p.reply, msg)
             self._record("accept", p)
 
     def fail_all(self, reason: str) -> None:
@@ -390,6 +410,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--halt-after", type=int)
     ap.add_argument("--proof-bytes", type=int, required=True, help="exact raw proof length (3072 for the test bundles)")
     ap.add_argument("--log", help="append JSON log lines to this file instead of stderr")
+    ap.add_argument("--release", default="arrival", choices=RELEASES,
+                    help="arrival: answers leave in request order (default); immediate: as decided (v0)")
     a = ap.parse_args(argv)
 
     sums = {}
@@ -403,7 +425,7 @@ def main(argv: list[str] | None = None) -> None:
                 domain=load_domain(a.domain) if a.domain else None,
                 log=file_log(a.log) if a.log else _stderr_log,
                 policy=Policy(deadline=a.deadline, max_pending=a.max_pending, halt_after=a.halt_after,
-                              proof_bytes=a.proof_bytes))
+                              proof_bytes=a.proof_bytes, release=a.release))
 
     async def run() -> None:
         host, port = _addr(a.listen)
