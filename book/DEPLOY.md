@@ -13,8 +13,10 @@ GitHub Pages can't restrict who reads a site on a personal account: private Page
 ## 2. Deploy the placeholder
 
 ```sh
-book/deploy-cloudflare.sh placeholder
+CF_ACCESS_TEAM=<your team name> book/deploy-cloudflare.sh placeholder
 ```
+
+`<your team name>` is the Zero Trust team name from step 1 (your login page is `<team>.cloudflareaccess.com`).
 
 This creates the Pages project `proof-gated-egress` and deploys a page that says "Nothing here." If Cloudflare gives the project a different address (for example with a suffix because the name is taken), set `CF_PAGES_HOST=<that address>` for the next steps.
 
@@ -35,10 +37,18 @@ Then test: open `https://<project>.pages.dev` in a private window. You should ge
 ## 4. Deploy the book
 
 ```sh
-book/deploy-cloudflare.sh book
+CF_ACCESS_TEAM=<your team name> book/deploy-cloudflare.sh book
 ```
 
-The script refuses to upload the book unless the main address already sends an unauthenticated visitor to the Access sign-in page, and checks again after deploying. Run it again whenever the book changes.
+The script refuses to upload the book unless the production address is one Cloudflare reports for the project and redirects a signed-out visitor to **your team's** Access login for that address. After uploading it checks the production address and the upload's own address (`<hash>.<project>.pages.dev`) again, and tells you to delete the deployment if either is open. Run it again whenever the book changes.
+
+**This is a smoke test, not an audit.** It sees one URL from outside; it can't read the Access policies. Before sending the link, check by hand in Zero Trust > Access controls > Applications:
+
+1. There are two applications, one for `<project>.pages.dev` and one for `*.<project>.pages.dev` (previews and per-upload addresses). Old upload addresses stay reachable after newer uploads, so the wildcard one must stay.
+2. Each has exactly one Allow policy listing only the readers' emails, login by one-time PIN, and no Bypass or path exceptions.
+3. In a private window: a signed-out visitor gets the sign-in page; an email that isn't listed gets no code; a listed email gets in.
+
+If the script refuses although the private window shows the sign-in page, Cloudflare's login address may look different from what it expects: run `curl -sI https://<project>.pages.dev/` and check the `location` header before changing anything.
 
 ## Notes
 
