@@ -2,12 +2,12 @@
 
 > **In short**
 > - Checking one proof on the Pi takes about 0.1 s with the proof tool alone and 0.24 s with all the gate's safety limits.
-> - A 256 MiB memory cap is safe for the checker; smaller caps fail unpredictably.
-> - The leakage experiment: order and timing can be closed (timing at the cost of 4 s per answer), deliberate failures can't yet. A plain explanation is in [What a hacked server can still leak](leakage.md).
+> - At a 256 MiB memory cap every recorded check passed (231 of 231); smaller caps fail unpredictably.
+> - The leakage experiment, one client at a time: releasing in arrival order stopped the ordering code we tried; a fixed release time stopped the 1 s timing code but left a small timing trace, at the cost of 4 s per answer; deliberate failures leaked under every policy. A plain explanation is in [What a hacked server can still leak](leakage.md).
 
 Everything here was measured on one Raspberry Pi 4 (2 GB, Raspberry Pi OS Lite, 64-bit) with the AI server (Python EZKL prover) and the observer on a laptop (Apple M4 Pro) over a direct Ethernet link, unless stated otherwise. Dates are 2026.
 
-**How to read the leakage numbers.** The server hides known bits and an observer tries to read them back. "16/16" means every planted bit was recovered; "chance" means about half were wrong. These are achieved rates for one encoder each. They show that a channel is open, or that one encoder no longer works; they are not capacity bounds.
+**How to read the leakage numbers.** The server hides known bits and an observer tries to read them back with a fixed decoder. "16/16" means every planted bit was recovered. When the decoder fails, the table says how many bits it got wrong; that shows this encoder and decoder no longer work, not that nothing leaks. These are achieved rates for one encoder each, from one sequential client unless stated; they are not capacity bounds.
 
 ## Checking one proof
 
@@ -46,7 +46,7 @@ A raw proof for the test model is 3,072 bytes. One thread costs 1.7x; the launch
 | 256 MiB (the gate's setting) | 20/20 |
 | 320 MiB | 20/20 |
 
-Longer runs the same day: 192 MiB 200/200; 256 MiB 200/200 and 10/10 (231 of 231 in all); 160 MiB 4/10 in a later sweep. The outcome near the limit varies from run to run and doesn't improve steadily with more memory (address-space layout randomisation is on). At 256 MiB, 0 failures in 231 runs means below about 1.3 % at 95 % confidence; not proven zero. A spurious error would count as a server failure, so the margin matters.
+Other runs the same day at 256 MiB: one first check, then 200/200 and 10/10, so 231 of 231 in all with the sweep; at 192 MiB 200/200; at 160 MiB 4/10 in a later sweep. The outcome near the limit varies from run to run and doesn't improve steadily with more memory (address-space layout randomisation is on). At 256 MiB, 0 failures in 231 runs means below about 1.3 % at 95 % confidence if the runs are independent; not proven zero, and only for this circuit on this Pi. A spurious error would count as a server failure, so the margin matters. The memory cap is enforced on Linux only.
 
 ## Attack surface
 
@@ -75,19 +75,19 @@ The first timing test (16 Oct, v0): the server delayed an answer by 1 s for each
 
 ## Release policies on the Pi
 
-The core experiment (19 Oct): the same workload under each of the gate's three release policies, with a 4 s budget for every policy, 16 planted bits per channel (`device/pi_matrix.sh`, summarised by `observer/analyze_matrix.py`).
+The core experiment (19 Oct): the same workload under each of the gate's three release policies, with a 4 s budget for every policy, 16 planted bits per channel, one run per cell (`device/pi_matrix.sh`, summarised by `observer/analyze_matrix.py`).
 
 | Channel the server uses | immediate (v0) | arrival (v1) | fixed |
 |---|---|---|---|
-| Timing: delay an answer by 1 s for a 1 | **16/16 leaked** | **16/16 leaked** | chance (12/16 wrong); answer times within 2 ms |
-| Ordering: answer 3 concurrent requests in a chosen order | **16/16 leaked** | none (always the same order) | none |
-| Failure position: fail one chosen answer in each 16 | **16/16 leaked** | **16/16 leaked** | **16/16 leaked** |
+| Timing: delay an answer by 1 s for a 1 | **16/16 recovered** | **16/16 recovered** | not recovered (12/16 wrong); answer times within 2 ms |
+| Ordering: answer 3 concurrent requests in a chosen order | **16/16 recovered** | decoded bits constant | decoded bits constant |
+| Failure position: fail one chosen answer in each 16 | **16/16 recovered** | **16/16 recovered** | **16/16 recovered** |
 | No signal (honest server, timing decoder) | 8/16 wrong | 10/16 wrong | 7/16 wrong |
 | Honest answer time, median | 0.81 s | 0.83 s | 4.0 s |
 
-- **Ordering** is closed by releasing in request order. On one connection that holds by construction; a separate localhost run showed v0 leaking floor(log2 k!) bits per batch of k concurrent requests (k = 2, 3, 4) with no errors.
-- **Timing** is closed at this resolution only by a fixed release time, and that costs latency: every answer waits the whole budget, about 5x the honest median here.
-- **Failures** stay open under every policy: 4 failures in 64 answers (6 %) carried 16 bits. A rare failure can carry many bits, because its position is the message.
+- **Ordering:** with arrival or fixed release the decoded bits were the same whatever the server planted, so the server's choice of order never reached the observer. On one connection that holds by construction: the gate sends answers in admission order and the client's ids increase. A separate localhost run showed v0 leaking floor(log2 k!) bits per batch of k concurrent requests (k = 2, 3, 4) with no errors.
+- **Timing:** the 1 s code wasn't recovered under fixed release, but a smaller timing trace remains (below). The cost is latency: every answer waits the whole budget, about 5 times the honest median in this sequential run.
+- **Failures** were recovered under every policy: 4 failures in 64 answers (6.25 %) carried 16 bits, 0.25 bit per request, with this particular encoder.
 
 ### What fixed release leaves
 
@@ -100,18 +100,20 @@ A longer run (128 random bits, plus 128 honest requests as a control) asked whet
 | Server encoding bits, with a 5 ms spin before release | +0.08 ms | p = 0.31 |
 | Honest server, with the spin | +0.09 ms | p = 0.20 |
 
-A threshold decoder tuned on one half of the run and tested on the other gets 25 % and 28 % of bits wrong. Read as a binary symmetric channel (which assumes independent errors), that is about **0.14-0.19 bit per answer**, about 0.04 bit/s at a 4 s budget, against 0.69 bit/s for v0's timing channel. So fixed release cuts timing leakage by roughly 15-20x, not to zero. One hypothesis was that the server's delay changes how long the device idles before the release timer fires, which shifts its wake-up time. Waking 5 ms early and busy-waiting until the release time (`--spin-ms 5`) removes the average shift: the spin run looks like its honest control. A held-out decoder still got 34 % wrong on one half and 44 % on the other (the controls: 39-59 %), and only about 1 % of random relabellings do as well as 34 %, so a weaker residue may remain. A larger run is needed to settle it.
+**Without spin**, the association is clear. A threshold decoder fitted on one half and tested on the other got 25 % and 28 % of the bits wrong (`observer/jitter_test.py --heldout`). If the channel were a symmetric binary channel with independent errors, that would correspond to about 0.14-0.19 bit per answer; it is a model-based figure, not a measured throughput, and the two error kinds were not symmetric in one half.
 
-A second, independent measure (`observer/estimate.py`): the mutual information between the hidden bit and the answer time, with answer times cut into 4 equal-count bins, a small-sample bias correction, a shuffled-label null and a bootstrap interval. It was first checked on synthetic channels with known values (`tests/test_estimate.py`). Binning can only lose information, so it tends to undercount.
+**With a 5 ms spin** (wake early and busy-wait until the release time, `--spin-ms 5`) the average shift is gone, but not every trace of the signal: the held-out decoder still got only 34 % wrong on one half (44 % on the other; honest controls 39-59 %), and a null that refits the decoder on shuffled labels does that well only 0.75 % of the time. So spin reduces the leak and probably doesn't close it. Idle wake-up latency is one hypothesis for the residue; it hasn't been isolated.
 
-| Run (n = 128) | Mutual information, bit per answer | 95 % interval | p |
-|---|---|---|---|
-| Fixed release, server encoding bits | 0.20 | 0.09 to 0.35 | 0.0005 |
-| Fixed release, honest server | about 0 | up to 0.06 | 0.75 |
-| Fixed release with spin, server encoding bits | 0.016 | up to 0.12 | 0.13 |
-| Fixed release with spin, honest server | about 0 | up to 0.06 | 0.41 |
+A second measure on the same data (`observer/estimate.py`): the mutual information between the hidden bit and the answer time, with times cut into 4 bins at their quantiles, a small-sample bias correction, a shuffled-label null and a bootstrap interval, checked first on synthetic channels with known values (`tests/test_estimate.py`). It describes this one binned statistic; it is not a lower or upper bound on what the timing reveals.
 
-The no-spin value agrees with the held-out decoder (0.14-0.19). With spin nothing is detected, but 128 answers can't rule out up to about 0.12 bit per answer.
+| Run (n = 128) | Mutual information, bit per answer (4 bins) | p |
+|---|---|---|
+| Fixed release, server encoding bits | 0.17 | 0.0005 |
+| Fixed release, honest server | about 0 | 0.68 |
+| Fixed release with spin, server encoding bits | 0.05 | 0.012 |
+| Fixed release with spin, honest server | about 0 | 0.73 |
+
+With 2 or 8 bins the no-spin result holds (p = 0.0005) and the spin result doesn't reach significance (p = 0.46 and 0.09), so the spin residue is suggestive, not settled. Two caveats on all these runs: the observer recorded times rounded to 0.1 ms (only 19-30 distinct values per 128 answers; it now keeps microseconds), and the spin runs used an earlier version of the spin code that a review later found could let a later answer overtake an earlier one when several were in flight. With one client at a time that case didn't arise, but the runs should be repeated with the fixed code.
 
 ## What these results don't show
 
