@@ -47,13 +47,13 @@ python3 observer/analyze_matrix.py runs/matrix
 
 `device/pi_scenario.sh NAME RELEASE N BATCH -- SERVER_ARGS` runs one scenario: it starts the prover in the given mode on this machine and the gate on the Pi, sends `N` requests (in batches of `BATCH`), and writes the traces and both logs to `OUT/NAME.*`. `DEADLINE` sets the gate's deadline, which with `fixed` release is also the release time.
 
-The residual-timing test (128 random bits plus an honest control):
+The residual-timing test (128 random bits plus an honest control; add `SPIN_MS=5` to both scenario commands for the spin version). Every scenario writes a manifest (`OUT/NAME.manifest.json`: commit, settings, exit status, row count) and exits non-zero if the observer failed or got fewer rows than asked for.
 
 ```sh
 B=$(python3 -c "import random; r=random.Random(20261019); print(''.join(r.choice('01') for _ in range(128)))")
 OUT=runs/fixed_long DEADLINE=4 device/pi_scenario.sh timing_fixed_long fixed 128 1 -- --mode timing_bits --bits $B --slot 1.0
 OUT=runs/fixed_long DEADLINE=4 device/pi_scenario.sh honest_fixed_long fixed 128 1 -- --mode honest
-python3 observer/jitter_test.py runs/fixed_long/timing_fixed_long.trace.jsonl $B --control runs/fixed_long/honest_fixed_long.trace.jsonl
+python3 observer/jitter_test.py runs/fixed_long/timing_fixed_long.trace.jsonl $B --control runs/fixed_long/honest_fixed_long.trace.jsonl --heldout 2000
 python3 observer/estimate.py runs/fixed_long/timing_fixed_long.trace.jsonl $B --control runs/fixed_long/honest_fixed_long.trace.jsonl
 python3 observer/estimate.py --selftest      # the estimator on synthetic channels with known values
 ```
