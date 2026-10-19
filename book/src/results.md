@@ -1,4 +1,9 @@
-# Results
+# Measurements
+
+> **In short**
+> - Checking one proof on the Pi takes about 0.1 s with the proof tool alone and 0.24 s with all the gate's safety limits.
+> - A 256 MiB memory cap is safe for the checker; smaller caps fail unpredictably.
+> - The leakage experiment: order and timing can be closed (timing at the cost of 4 s per answer), deliberate failures can't yet. A plain explanation is in [What a hacked server can still leak](leakage.md).
 
 Everything here was measured on one Raspberry Pi 4 (2 GB, Raspberry Pi OS Lite, 64-bit) with the AI server (Python EZKL prover) and the observer on a laptop (Apple M4 Pro) over a direct Ethernet link, unless stated otherwise. Dates are 2026.
 
@@ -25,7 +30,7 @@ What the full gate path costs (19 Oct, medians of 20, `device/verify_cost.py`):
 | Reading and canonicalising the proof | 2 |
 | Full gate check | 239 |
 
-One thread costs 1.7x; the launcher's Python start-up is about 45 ms. Both could be cut (a static launcher; hashing the bundle once when it lives in a read-only image). On the laptop, proving takes about 0.5-0.8 s and an in-process verify 8-14 ms.
+A raw proof for the test model is 3,072 bytes. One thread costs 1.7x; the launcher's Python start-up is about 45 ms. Both could be cut (a static launcher; hashing the bundle once when it lives in a read-only image). On the laptop, proving takes about 0.5-0.8 s and an in-process verify 8-14 ms.
 
 **The memory limit is not a clean floor.** Address-space limit vs. how often a valid proof is accepted, in one sweep of 20 runs per limit (19 Oct; the rest abort, which the gate treats as an error):
 
@@ -66,6 +71,8 @@ Misbehaving server against the v1 gate on the Pi (19 Oct):
 | Answers twice | one answer to the client; the duplicate is dropped and counted |
 | Sends garbage or an oversized frame | server link dropped; the pending request fails, the next gets `unavailable` in under 1 ms |
 
+The first timing test (16 Oct, v0): the server delayed an answer by 1 s for each 1 bit; an observer decoded 16 of 16 bits, 0.69 bit/s, while honest answers varied by 81 ms.
+
 ## Release policies on the Pi
 
 The core experiment (19 Oct): the same workload under each of the gate's three release policies, with a 4 s budget for every policy, 16 planted bits per channel (`device/pi_matrix.sh`, summarised by `observer/analyze_matrix.py`).
@@ -90,8 +97,10 @@ A longer run (128 random bits, plus 128 honest requests as a control) asked whet
 |---|---|---|
 | Server encoding bits | -0.66 ms (-0.73 and -0.60 in each half) | p < 0.0001 |
 | Honest server, same labels | +0.19 ms | p = 0.13 |
+| Server encoding bits, with a 5 ms spin before release | +0.08 ms | p = 0.31 |
+| Honest server, with the spin | +0.09 ms | p = 0.20 |
 
-A threshold decoder tuned on one half of the run and tested on the other gets 25 % and 28 % of bits wrong. Read as a binary symmetric channel (which assumes independent errors), that is about **0.14-0.19 bit per answer**, about 0.04 bit/s at a 4 s budget, against 0.69 bit/s for v0's timing channel. So fixed release cuts timing leakage by roughly 15-20x, not to zero. The mechanism is not yet known; one hypothesis is that the server's delay changes how long the device idles before the release timer fires, which shifts its wake-up time.
+A threshold decoder tuned on one half of the run and tested on the other gets 25 % and 28 % of bits wrong. Read as a binary symmetric channel (which assumes independent errors), that is about **0.14-0.19 bit per answer**, about 0.04 bit/s at a 4 s budget, against 0.69 bit/s for v0's timing channel. So fixed release cuts timing leakage by roughly 15-20x, not to zero. One hypothesis was that the server's delay changes how long the device idles before the release timer fires, which shifts its wake-up time. Waking 5 ms early and busy-waiting until the release time (`--spin-ms 5`) removes the average shift: the spin run looks like its honest control. A held-out decoder still got 34 % wrong on one half and 44 % on the other (the controls: 39-59 %), and only about 1 % of random relabellings do as well as 34 %, so a weaker residue may remain. A larger run is needed to settle it.
 
 ## What these results don't show
 
