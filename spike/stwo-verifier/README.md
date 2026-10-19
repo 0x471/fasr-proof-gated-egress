@@ -20,7 +20,7 @@ Not on the device yet. The gate still uses EZKL.
 - The library's binary loader reads the whole bzip2 stream and calls `bincode::deserialize` without a limit, so a small file can expand to gigabytes.
 - Without the program hash, a valid proof of any program would pass.
 
-The program hashes in `fixtures/pins.txt` were read from honest proofs, the way a verification key is pinned. They have not been recomputed independently from the compiled programs.
+The program hashes in `fixtures/pins.txt` were first read from honest proofs. `program_hash.py` recomputes them from the compiled programs without the prover (Blake2s over the encoded program words, as `get_verification_output` does), and `prove.sh` checks that they match.
 
 ## Running it
 
@@ -52,4 +52,3 @@ On 1 Jul the Cairo verifier gained two checks in `verify_claim`: the output segm
 
 - An aarch64 build with the pinned toolchain.
 - Fuzzing the claim fields to reach the `assert!` paths.
-- An independent program hash.
