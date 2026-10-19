@@ -1001,3 +1001,20 @@ def test_fixed_release_hides_the_timing_bits(tiny_bundle, verifier):
         assert all(r["answer"]["ok"] for r in rows) and max(ms) - min(ms) < 60
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "timing_bits", bits="101101", slot=0.4),
               policy=Policy(deadline=1.0, release="fixed"))
+
+
+@pytest.mark.parametrize("release", ["immediate", "arrival", "fixed"])
+def test_failure_position_leaks_under_every_release_policy(tiny_bundle, verifier, release):
+    # Expected: which answer fails is the open failure channel; no release policy closes it.
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import decode_failure_position, trace
+
+    bits, batch = "100111", 4
+
+    async def t(st):
+        port = st.servers[1].sockets[0].getsockname()[1]
+        rows = await trace("127.0.0.1", port, [[TINY_X]] * 12)
+        assert sum(not r["answer"]["ok"] for r in rows) == 3
+        assert decode_failure_position(rows, batch) == bits
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "fail_position", bits=bits, batch=batch),
+              policy=Policy(deadline=1.0, release=release))
