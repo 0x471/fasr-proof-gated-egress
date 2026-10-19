@@ -3,6 +3,8 @@
 Usage: python observer/client.py HOST PORT X_JSON [--n N] > trace.jsonl
 X_JSON is one request's x, e.g. '[[0.5, -0.2, 0.9, 0.1]]'. Each output line is
 {"id", "elapsed_ms", "answer"}; elapsed_ms runs from sending the request to reading its answer.
+Requests and answers use the gate's binary format (pge/protocol.py); the observer needs no
+bundle, so it sizes requests from x and answers from their frame length (y comes back flat).
 """
 from __future__ import annotations
 
@@ -12,6 +14,10 @@ import json
 import struct
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from pge.protocol import Wire, frame  # noqa: E402
 
 
 async def trace(host: str, port: int, xs: list) -> list[dict]:
@@ -19,12 +25,14 @@ async def trace(host: str, port: int, xs: list) -> list[dict]:
     rows = []
     try:
         for cid, x in enumerate(xs):
-            body = json.dumps({"id": cid, "x": x}).encode()
+            body = Wire(tuple(len(t) for t in x), ()).encode_request(cid, x)
             start = time.monotonic()
-            writer.write(struct.pack(">I", len(body)) + body)
+            writer.write(frame(body))
             await writer.drain()
             n = struct.unpack(">I", await reader.readexactly(4))[0]
-            answer = json.loads(await reader.readexactly(n))
+            if n < 10 or (n - 10) % 8:
+                raise ValueError(f"reply of {n} bytes is not a gate reply")
+            answer = Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
             rows.append({"id": cid, "elapsed_ms": round((time.monotonic() - start) * 1000, 1), "answer": answer})
     finally:
         writer.close()
