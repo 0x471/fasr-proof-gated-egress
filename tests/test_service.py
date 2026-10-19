@@ -555,7 +555,7 @@ def test_server_violation_detail_is_fixed_text(tiny_bundle, verifier):
 
 @pytest.mark.parametrize("kw", [
     {"deadline": float("inf")}, {"deadline": float("nan")}, {"deadline": 0}, {"deadline": -1}, {"deadline": True},
-    {"max_pending": 0}, {"max_pending": 1.5}, {"halt_after": 0}, {"proof_bytes": 0}, {"proof_bytes": 1 << 21},
+    {"max_pending": 0}, {"max_pending": 1.5}, {"halt_after": 0}, {"proof_bytes": 0}, {"proof_bytes": 1 << 21}, {"proof_bytes": 65537},
     {"max_clients": 0}, {"idle": 0},
 ])
 def test_bad_policy_is_refused(kw):
