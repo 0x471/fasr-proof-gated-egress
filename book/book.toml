@@ -1,0 +1,13 @@
+[book]
+title = "Proof-gated egress"
+description = "A device that releases AI outputs only with a valid zero-knowledge proof: threat model, attack catalogue and measurements."
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/0x471/fasr-proof-gated-egress"
+site-url = "/fasr-proof-gated-egress/"
+no-section-label = false
+
+[output.html.search]
+enable = true
