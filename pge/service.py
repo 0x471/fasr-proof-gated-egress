@@ -34,7 +34,7 @@ SERVER_BUFFER_MAX = 1 << 20
 RELEASES = ("arrival", "immediate")
 
 REASONS = frozenset({"request", "proof_length", "binding", "proof", "verifier", "verifier_failed",
-                     "reply", "closed", "violation", "lost", "protocol", "ids"})
+                     "reply", "closed", "violation", "lost", "protocol", "ids", "held"})
 
 
 def _number(v, lo: float, hi: float) -> bool:
@@ -114,7 +114,7 @@ class Gate:
     counts: Counter = field(default_factory=Counter)
     pending: dict[int, _Pending] = field(default_factory=dict)
     # Decided answers waiting for every earlier seq to be released (arrival order).
-    _held: dict[int, Callable[[], None]] = field(default_factory=dict)
+    _held: dict[int, tuple[_Pending, bytes, str, str]] = field(default_factory=dict)
     _next_release: int = 1
     _server: asyncio.StreamWriter | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -150,29 +150,42 @@ class Gate:
         except Exception:
             pass
 
-    def _release(self, seq: int, reply: Callable[[bytes], None], msg: bytes) -> None:
-        """Send the answer for an admitted request, in seq order unless release is immediate."""
-        if self.policy.release == "immediate":
-            self._send(reply, msg)
-            return
-        self._held[seq] = lambda: self._send(reply, msg)
-        while self._next_release in self._held:
-            self._held.pop(self._next_release)()
-            self._next_release += 1
+    def _release(self, p: _Pending, msg: bytes, result: str, reason: str = "") -> None:
+        """Send and log the answer for an admitted request, in seq order unless release is immediate.
 
-    def _fail(self, p: _Pending, result: str, reason: str = "", count: bool = True) -> None:
-        """Answer unavailable. Failures the server caused count towards halt_after."""
-        self._release(p.seq, p.reply, self.wire.reply_error(p.cid, "unavailable"))
-        self._record(result, p, reason)
-        if not count:
+        A held success is checked again when it leaves: after a halt or past its own deadline
+        it becomes unavailable.
+        """
+        if self.policy.release == "immediate":
+            self._send(p.reply, msg)
+            self._record(result, p, reason)
             return
+        self._held[p.seq] = (p, msg, result, reason)
+        while self._next_release in self._held:
+            p, msg, result, reason = self._held.pop(self._next_release)
+            self._next_release += 1
+            late = result == "accept" and not self.halted and time.monotonic() >= p.due
+            if result == "accept" and (self.halted or late):
+                msg = self.wire.reply_error(p.cid, "unavailable")
+                result, reason = ("deadline", "held") if late else ("halted", "")
+            self._send(p.reply, msg)
+            self._record(result, p, reason)
+            if late:
+                self._count_failure()
+
+    def _count_failure(self) -> None:
         self.failures += 1
         if self.policy.halt_after is not None and self.failures >= self.policy.halt_after and not self.halted:
             self.halted = True
             self._log({"result": "halted", "failures": self.failures})
             for seq in sorted(self.pending):
-                q = self._finish(seq)
-                self._fail(q, "halted", count=False)
+                self._fail(self._finish(seq), "halted", count=False)
+
+    def _fail(self, p: _Pending, result: str, reason: str = "", count: bool = True) -> None:
+        """Answer unavailable. Failures the server caused count towards halt_after, before release."""
+        if count:
+            self._count_failure()
+        self._release(p, self.wire.reply_error(p.cid, "unavailable"), result, reason)
 
     def _finish(self, seq: int) -> _Pending | None:
         p = self.pending.pop(seq, None)
@@ -285,8 +298,7 @@ class Gate:
             except (ValueError, struct.error):
                 self._fail(p, "error", "reply")
                 return
-            self._release(p.seq, p.reply, msg)
-            self._record("accept", p)
+            self._release(p, msg, "accept")
 
     def fail_all(self, reason: str) -> None:
         for seq in sorted(self.pending):
