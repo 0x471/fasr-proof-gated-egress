@@ -1018,3 +1018,25 @@ def test_failure_position_leaks_under_every_release_policy(tiny_bundle, verifier
         assert decode_failure_position(rows, batch) == bits
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "fail_position", bits=bits, batch=batch),
               policy=Policy(deadline=1.0, release=release))
+
+
+def test_fixed_release_with_spin_never_releases_early(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, release="fixed", spin=0.02)
+        sent = []
+        t0 = time.monotonic()
+        for cid in (1, 2, 3):
+            gate.submit(cid, [TINY_X], lambda m: sent.append((gate.wire.parse_reply(m), time.monotonic() - t0)))
+        gate.on_answer(1, outputs, raw)
+        gate.on_answer(2, outputs, b"\x00")
+        await asyncio.sleep(0.45)
+        assert [(m["id"], m["ok"]) for m, _ in sent] == [(1, True), (2, False), (3, False)]
+        # Never early is the property; the upper bound only catches a release that never spins.
+        assert all(0.3 <= t < 0.4 for _, t in sent)
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize("spin", [-0.001, 0.051, True])
+def test_bad_spin_is_refused(spin):
+    with pytest.raises(ValueError):
+        Policy(release="fixed", spin=spin)
