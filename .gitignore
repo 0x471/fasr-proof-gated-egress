@@ -16,3 +16,6 @@ prover/artifacts/
 spike/rust-verifier/.build/
 spike/stwo-verifier/.build/
 spike/stwo-verifier/target/
+
+# Gate scenario outputs (device/pi_scenario.sh)
+runs/
