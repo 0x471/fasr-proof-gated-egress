@@ -184,3 +184,23 @@ def test_fuzzed_input_is_refused_or_canonical(parser):
         accepted += 1
         assert _reencode(parser, out, raw) == raw
     assert accepted > 0
+
+
+def test_proof_tail_bound_is_64_kib():
+    assert PROOF_MAX == 65536
+    head = struct.pack(">BQ", ANSWER, 1) + bytes(32 * 3)
+    assert len(W.parse_answer(head + bytes(65536))[2]) == 65536
+    with pytest.raises(ProtocolError):
+        W.parse_answer(head + bytes(65537))
+
+
+def test_split_frame_must_complete_within_one_deadline():
+    async def go():
+        loop = asyncio.get_running_loop()
+        r = asyncio.StreamReader()
+        r.feed_data(b"\x00")
+        loop.call_later(0.15, r.feed_data, b"\x00\x00\x02")
+        loop.call_later(0.3, r.feed_data, b"ab")
+        return await read_frame(r, 100, body_timeout=0.25)
+    with pytest.raises(ProtocolError):
+        asyncio.run(go())
