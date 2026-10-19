@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 import pge.cli as cli  # noqa: E402
 from pge.bundle import Bundle, Pins  # noqa: E402
-from pge.proc import run_bounded  # noqa: E402
+from pge.proc import OK, run_bounded  # noqa: E402
 from pge.verdict import Verdict, canonical_proof, read_proof  # noqa: E402
 
 TINY = ROOT / "tests" / "fixtures" / "tiny"
@@ -57,6 +57,10 @@ def main(argv: list[str] | None = None) -> None:
         r = subprocess.run(argv_cli, env=env, capture_output=True)
         assert r.returncode == 0, r.stdout[-200:]
 
+    def bounded(limits=None):
+        status, rc, out = run_bounded(argv_cli, 10, 1 << 16, env=cli._env(), limits=limits)
+        assert status == OK and rc == 0, (status, rc, out[-200:])
+
     def gate():
         v, d = cli.verify_with_cli(bundle, proof, a.cli, 10)
         assert v is Verdict.ACCEPT, d
@@ -65,9 +69,8 @@ def main(argv: list[str] | None = None) -> None:
     rows = [
         ("raw CLI, default threads", lambda: raw(base)),
         ("raw CLI, RAYON_NUM_THREADS=1", lambda: raw(dict(base, RAYON_NUM_THREADS="1"))),
-        ("run_bounded, no limits", lambda: run_bounded(argv_cli, 10, 1 << 16, env=cli._env())),
-        ("run_bounded, v1 limits", lambda: run_bounded(argv_cli, 10, 1 << 16, env=cli._env(),
-                                                        limits=cli.cli_limits(10))),
+        ("run_bounded, no limits", bounded),
+        ("run_bounded, v1 limits", lambda: bounded(cli.cli_limits(10))),
         ("bundle.check", bundle.check),
         ("read + canonical proof", lambda: canonical_proof(read_proof(proof))),
         ("verify_with_cli (gate path)", gate),
