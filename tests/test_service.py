@@ -788,11 +788,12 @@ def test_held_answer_waits_only_for_the_earlier_deadline(tiny_bundle, verifier):
         c = await st.client()
         start = time.monotonic()
         c.send(1, [TINY_X])
+        await asyncio.sleep(0.3)
         c.send(2, [TINY_X])
         first, second = await c.recv(), await c.recv()
         assert first == {"id": 1, "ok": False, "error": "unavailable"} and second == {"id": 2, "ok": True, "y": Y}
         assert 0.9 < time.monotonic() - start < 3
-        assert st.results() == ["accept", "deadline"]
+        assert st.results() == ["deadline", "accept"]
     run_stack(tiny_bundle, verifier, t, server=Reversed(FakeProver(tiny_bundle.spec), skip={1}),
               policy=Policy(deadline=1))
 
@@ -810,3 +811,99 @@ def test_failures_are_released_in_order_too(tiny_bundle, verifier):
 def test_bad_release_policy_is_refused():
     with pytest.raises(ValueError):
         Policy(release="random")
+
+
+class _NullServer:
+    class transport:
+        @staticmethod
+        def get_write_buffer_size():
+            return 0
+
+    def write(self, data):
+        pass
+
+    def is_closing(self):
+        return False
+
+    def close(self):
+        pass
+
+
+def _direct_gate(bundle, verifier, **policy):
+    records = []
+    proof = json.loads((TINY / "proof.json").read_text())
+    gate = Gate(spec=bundle.spec, verifier=verifier, log=records.append,
+                policy=Policy(proof_bytes=len(proof["proof"]), **policy))
+    gate._server = _NullServer()
+    return gate, records, split_instances(bundle.spec, proof["instances"])[1], bytes(proof["proof"])
+
+
+async def _settle(gate):
+    while gate._tasks:
+        await asyncio.gather(*list(gate._tasks), return_exceptions=True)
+
+
+def _accept(data, timeout):
+    return Verdict.ACCEPT, ""
+
+
+def test_halt_revokes_held_successes(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=5, halt_after=1)
+        got = []
+        for cid in (1, 2, 3):
+            gate.submit(cid, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
+        gate.on_answer(2, outputs, raw)
+        await _settle(gate)
+        assert got == [] and gate._held
+        gate.on_answer(3, outputs, b"\x00")
+        await _settle(gate)
+        assert [m["ok"] for m in got] == [False, False, False]
+        assert gate.halted and "accept" not in [r["result"] for r in records]
+    asyncio.run(go())
+
+
+def test_held_success_past_its_deadline_is_not_released(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.2)
+        got = []
+        for cid in (1, 2):
+            gate.submit(cid, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
+        gate.on_answer(2, outputs, raw)
+        await _settle(gate)
+        time.sleep(0.4)  # the loop stalls, so the deadline timer for seq 1 runs late
+        await asyncio.sleep(0.05)
+        assert [m["ok"] for m in got] == [False, False]
+        assert [(r["result"], r.get("reason")) for r in records] == [("deadline", None), ("deadline", "held")]
+        assert gate.failures == 2
+    asyncio.run(go())
+
+
+def test_held_answers_count_towards_max_pending(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=5, max_pending=2)
+        got = []
+        for cid in (1, 2):
+            gate.submit(cid, [TINY_X], got.append)
+        gate.on_answer(2, outputs, b"\x00")
+        await _settle(gate)
+        assert len(gate.pending) == 1 and len(gate._held) == 1
+        gate.submit(3, [TINY_X], got.append)
+        assert gate.seq == 2 and [r["result"] for r in records] == ["busy"]
+    asyncio.run(go())
+
+
+def test_held_answers_go_to_their_own_clients(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=5)
+        a, b = [], []
+        gate.submit(10, [TINY_X], lambda m: a.append(gate.wire.parse_reply(m)))
+        gate.submit(20, [TINY_X], lambda m: b.append(gate.wire.parse_reply(m)))
+        gate.on_answer(2, outputs, raw)
+        await _settle(gate)
+        gate.on_answer(1, outputs, raw)
+        await _settle(gate)
+        assert a == [{"id": 10, "ok": True, "y": Y}] and b == [{"id": 20, "ok": True, "y": Y}]
+        assert not gate.pending and not gate._held
+        assert [r["seq"] for r in records] == [1, 2]
+    asyncio.run(go())
