@@ -9,7 +9,7 @@
 
 - **The v1 image.** The v1 software runs on the stock OS. The stripped image (only the gate, two wired ports, read-only system, a separate unprivileged user for the verifier, a log partition) is in progress.
 - **v2:** signed, versioned updates with a rollback rule and power-loss-safe installation; secure boot (which permanently writes a key into the board, so it needs a spare board); a hash-chained log sent to a separate collector.
-- **A defence for the failure channel.** No release policy limits it. Capping failures per window bounds it: with at most F failures among N answers the server can choose among at most sum over i of C(N, i), i = 0..F, patterns, i.e. at most log2 of that many bits per window. Halting after one failure caps it at log2 N bits per restart. That bound is not yet written up or measured against honest availability.
+- **A defence for the failure channel.** No release policy limits it. Capping failures per window bounds what the failure pattern alone can carry: if the observer sees only which of N answers failed and the gate allows at most F, the server can send at most log2(C(N,0) + ... + C(N,F)) bits per window; stopping at the first failure leaves N + 1 outcomes per window, if restarts are controlled. Timing, logs and restarts need their own accounting, and none of this is implemented or measured yet.
 
 ## Not measured yet
 
@@ -17,13 +17,13 @@
 - **Several clients at once,** other loads, and a packet capture on the outside link (packet sizes and TCP behaviour are still the stock OS's).
 - **The `busy` channel:** a server that holds requests open makes other clients' requests fail; it depends on load and is not measured.
 - **The budget trade-off:** fixed release was run with one budget (4 s); leakage and lost answers against the budget are not measured.
-- **The residual timing shift** under fixed release: its mechanism, and whether waking early and spinning until the release time removes it.
+- **The residual timing trace** under fixed release: its mechanism, and whether the redesigned spin (waking early and waiting precisely) removes it. Spin removed the average shift in one 128-answer run but probably not all of the signal, and that run used an earlier version of the spin code; it needs repeating with more answers, finer timestamps and several clients.
 
 ## Assumptions the results rest on
 
 - Every path from the server to the outside goes through the device. On the v0 OS this is not enforced.
 - One pinned model and circuit; the binding rules are specific to EZKL 23.0.5.
-- The verifier binary, the bundle and the interpreter are trusted inputs of the image; the device checks their hashes, not their correctness.
+- The verifier binary, the bundle and the interpreter are trusted inputs of the image. The gate checks the bundle's hashes at load and before every check; the CLI's download is checked by its digest when it is fetched; the interpreter and the CLI on disk are not re-checked at run time, so they rely on the read-only image.
 - The proof system is sound. Its soundness is out of scope.
 
 ## Out of scope

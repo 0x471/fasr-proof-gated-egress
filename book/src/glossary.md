@@ -8,11 +8,11 @@
 
 **Channel.** Any way a hacked server can get information to someone outside: timing, order, failures, packet sizes, the gate's logs.
 
-**Deadline / budget.** How long the gate waits for a valid answer before replying `unavailable`. With fixed-time release, every answer leaves exactly at the deadline.
+**Deadline / budget.** How long the gate waits for a valid answer before replying `unavailable`. With fixed-time release, every answer also leaves no earlier than its deadline.
 
 **EZKL.** The open-source tool used here to prove the outputs of a small machine-learning model and to check those proofs.
 
-**Fixed-time release.** A release rule: every answer leaves exactly a set time after its question, whatever the server did. Hides the server's timing at the cost of speed.
+**Fixed-time release.** A release rule: answers leave in arrival order, each no earlier than a set time after its question (in practice within a few milliseconds of it), whatever the server did. It hides most of the server's timing at the cost of speed; a small trace was measured.
 
 **Gate.** The Raspberry Pi running the checking software, between the AI server and the outside world.
 
@@ -22,7 +22,7 @@
 
 **Release rule (release policy).** When the gate sends an answer back: immediately, in arrival order, or at a fixed time.
 
-**Replay.** Sending an old valid answer again. The gate matches each answer to exactly one pending question, so an old answer can't be delivered twice.
+**Replay.** Sending an old valid answer again. The gate matches each answer to exactly one pending question, so no question gets two answers. An old proof for the same question can still answer a new request; for one deterministic model that gives the server no choice of output, but it isn't proof of fresh computation.
 
 **Request binding.** Making sure a proof is about **this** question, **this** model and **this** reading of the output, not just "some valid computation".
 

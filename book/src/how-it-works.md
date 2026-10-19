@@ -2,13 +2,13 @@
 
 > **In short**
 > - The gate checks each answer's proof against the question **it** received, not against anything the server says about the question.
-> - It sends back either the proven answer or one fixed error message, never anything the server wrote.
+> - It sends back either the proven answer or the fixed error `unavailable`, never anything the server wrote. (A malformed question gets `bad_request` before it reaches the server.)
 > - It can release answers in three ways; the choice decides how much a hacked server can signal through timing and order.
 
 ## The life of one question
 
 1. **A user sends a question** to the gate. The gate checks it is well-formed and inside what the model can answer. If not, the user gets an error straight away and nothing reaches the server.
-2. **The gate forwards the question** to the AI server, tagged with the gate's own counter. The server never learns who asked.
+2. **The gate forwards the question** to the AI server, tagged with the gate's own counter. The server doesn't get the client's id or connection, though it still sees the question itself and when it arrived.
 3. **The server answers** with an output and a proof that the approved model computed that output from that question.
 4. **The gate checks the proof.** It rebuilds what the proof must be about from its own copy of the question, uses only the approved model's pinned key, and runs the check with strict limits on time and memory.
 5. **The gate replies.** If the proof checks out, the user gets the output, decoded from the proven values. Otherwise the user gets `unavailable`. Every reply has the same size.
@@ -30,11 +30,11 @@ The full rules are in the [Request binding specification](binding-spec.md).
 | Release rule | When an answer leaves | What it stops | The cost |
 |---|---|---|---|
 | Immediate (v0) | As soon as it is checked | Nothing | None |
-| Arrival order (v1, the default) | After every earlier question's answer | Reordering | A slow answer holds up the ones behind it |
-| Fixed time | Exactly a set time after its question | Reordering and almost all timing | Every answer waits the full time |
+| Arrival order (v1, the default) | After every earlier question's answer | Reordering (shown on one connection) | A slow answer holds up the ones behind it |
+| Fixed time | In arrival order, and not before a set time after its question (in practice within a few ms of it) | Reordering, and the timing codes we tried (a small trace remained) | Every answer waits the full time |
 
 No release rule can stop the server from making chosen answers fail, because the server can always send a bad proof. That is the open problem described in [What a hacked server can still leak](leakage.md).
 
 ## The proof system
 
-The gate uses [EZKL](https://github.com/zkonduit/ezkl) 23.0.5, an open-source tool that proves the output of small machine-learning models. The test model is tiny (4 inputs, 3 outputs), because the research question is about the gate, not the prover. A production proof system would slot into the same place.
+The gate uses [EZKL](https://github.com/zkonduit/ezkl) 23.0.5, an open-source tool that proves the output of small machine-learning models. The test model is tiny (4 inputs, 3 outputs) and deterministic, because the research question is about the gate, not the prover. A production proof system would take the same place in the design, but it needs its own binding rules (what exactly the proof states, how inputs and outputs are encoded, any randomness) and its own review.
