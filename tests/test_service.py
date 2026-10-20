@@ -1180,3 +1180,52 @@ def test_order_across_connections(tiny_bundle, verifier, release, leaked):
         assert decode_order_bits(rows, 3) == (bits if leaked else "0" * len(bits))
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "order_bits", bits=bits, batch=3),
               policy=Policy(deadline=1.0, release=release))
+
+
+async def _stub_gate(order, withhold=(), when=3):
+    # Once `when` clients have asked in a round, answers them in `order`, 5 ms apart; later
+    # clients get their answer on arrival. Withheld clients are never answered.
+    wire, conns, got = Wire((4,), (3,)), [], {}
+
+    async def handle(reader, writer):
+        c = len(conns)
+        conns.append(writer)
+        while (body := await read_frame(reader, 100)) is not None:
+            rid = struct.unpack_from(">BQ", body)[1]
+            got.setdefault(rid, set()).add(c)
+            ks = order if len(got[rid]) == when else [c] if len(got[rid]) > when else []
+            for k in ks:
+                if k not in withhold:
+                    conns[k].write(frame(wire.reply_ok(rid, [[0.0, 0.0, 0.0]])))
+                    await asyncio.sleep(0.005)
+    return await asyncio.start_server(handle, "127.0.0.1", 0)
+
+
+def test_trace_clients_reports_the_order_answers_arrived():
+    # Found by review: readers started after sending reported buffered answers in client order.
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import trace_clients
+
+    async def go():
+        # Clients 1 then 0 are answered while client 2 hasn't asked yet.
+        srv = await _stub_gate([1, 0], when=2)
+        port = srv.sockets[0].getsockname()[1]
+        rows = await trace_clients("127.0.0.1", port, [TINY_X], 3, 2, gap_ms=40)
+        srv.close()
+        assert [(r["round"], r["client"]) for r in rows] == [(0, 1), (0, 0), (0, 2), (1, 1), (1, 0), (1, 2)]
+    asyncio.run(go())
+
+
+def test_trace_clients_streams_rows_while_one_client_waits():
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import trace_clients
+
+    async def go():
+        srv = await _stub_gate([0, 1, 2], withhold={2})
+        port = srv.sockets[0].getsockname()[1]
+        seen = []
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(trace_clients("127.0.0.1", port, [TINY_X], 3, 1, gap_ms=1, on_row=seen.append), 0.3)
+        srv.close()
+        assert [r["client"] for r in seen] == [0, 1]
+    asyncio.run(go())
