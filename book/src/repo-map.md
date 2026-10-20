@@ -52,5 +52,6 @@
 |---|---|
 | `image/` | Builds the stripped-down v1 system with Buildroot (work in progress) |
 | `book/` | This book (mdBook); the reference pages include the files in `docs/` |
+| `book/diagrams/`, `book/render-diagrams.sh` | Diagram sources (Mermaid) and the script that renders them to `book/src/diagrams/*.svg`; mdBook has no Mermaid support, so the SVGs are committed |
 | `spike/rust-verifier/` | Side experiment: EZKL's checker as a small Rust program |
 | `spike/stwo-verifier/` | Side experiment: a pinned checker for S-two (StarkWare) proofs |
