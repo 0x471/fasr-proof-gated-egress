@@ -1112,6 +1112,50 @@ def test_spin_never_blocks_the_loop_for_long(tiny_bundle):
     asyncio.run(go())
 
 
+@pytest.mark.parametrize("how", ["disconnect", "halt"])
+def test_failing_many_answers_at_once_never_spins_for_long(tiny_bundle, how):
+    # Found by review: a disconnect or halt failed every pending request in one callback,
+    # and each release pumped and spun again, so the loop blocked for the sum of the gaps.
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.1, release="fixed", spin=0.005,
+                                                   max_pending=64, halt_after=1 if how == "halt" else None)
+        for cid in range(1, 21):
+            gate.submit(cid, [TINY_X], lambda m: None)
+            await asyncio.sleep(0.002)
+        first_due = min(p.due for p in gate.pending.values())
+        await asyncio.sleep(max(0.0, first_due - time.monotonic() - 0.003))
+        t0 = time.monotonic()
+        if how == "disconnect":
+            gate.fail_all("closed")
+        else:
+            gate.on_answer(20, outputs, b"\x00")
+            await asyncio.sleep(0)
+        blocked = time.monotonic() - t0
+        gaps, last = [], time.monotonic()
+        while gate._held or gate.pending:
+            await asyncio.sleep(0)
+            now = time.monotonic()
+            gaps.append(now - last)
+            last = now
+        assert len(records) >= 20 and blocked < 0.005 + 0.004 and max(gaps) < 0.005 + 0.004
+    asyncio.run(go())
+
+
+def test_fixed_release_counts_held_answers_towards_capacity(tiny_bundle):
+    async def go():
+        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, release="fixed", max_pending=2)
+        got = []
+        for cid in (1, 2):
+            gate.submit(cid, [TINY_X], lambda m: None)
+            gate.on_answer(cid, outputs, raw)
+        await _settle(gate)
+        assert not gate.pending and len(gate._held) == 2
+        gate.submit(3, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
+        assert got and got[0]["ok"] is False and records[-1]["result"] == "busy"
+        await asyncio.sleep(0.4)
+    asyncio.run(go())
+
+
 def test_order_decoder_marks_bad_batches_and_stays_aligned():
     sys.path.insert(0, str(ROOT / "observer"))
     from client import decode_order_bits
