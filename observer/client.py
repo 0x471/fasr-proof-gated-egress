@@ -83,33 +83,54 @@ async def trace_clients(host: str, port: int, x: list, clients: int, rounds: int
                         on_row=None) -> list[dict]:
     """Several connections, one request each per round; rows in arrival order across connections.
 
-    "id" is the client index, so the batch decoders read the order across connections.
+    Every connection has a reader waiting before anything is sent, so each answer is timed and
+    emitted as soon as it is read, and one silent connection doesn't hold back the others' rows.
+    Answers that arrive together are read in the order the loop wakes their readers, which need
+    not be the order on the wire; a packet capture settles close cases. "id" is the client index,
+    so the batch decoders read the order across connections.
     """
     conns = [await asyncio.open_connection(host, port) for _ in range(clients)]
     body = lambda rid: frame(Wire(tuple(len(t) for t in x), ()).encode_request(rid, x))
     rows = []
+    sent = [[0.0] * rounds for _ in range(clients)]
+    arrived = [0] * rounds
+    done = [asyncio.Event() for _ in range(rounds)]
     t0 = time.monotonic()
+
+    async def read(c):
+        for r in range(rounds):
+            answer = await _read_reply(conns[c][0])
+            t = time.monotonic()
+            if answer["id"] != r:
+                raise ValueError(f"client {c} round {r}: answer for id {answer['id']}")
+            rows.append({"id": c, "client": c, "round": r, "elapsed_ms": round((t - sent[c][r]) * 1000, 3),
+                         "recv_ms": round((t - t0) * 1000, 3), "answer": answer})
+            if on_row:
+                on_row(rows[-1])
+            arrived[r] += 1
+            if arrived[r] == clients:
+                done[r].set()
+
+    readers = [asyncio.create_task(read(c)) for c in range(clients)]
     try:
         for r in range(rounds):
-            sent = []
             for c, (_, w) in enumerate(conns):
+                sent[c][r] = time.monotonic()
                 w.write(body(r))
                 await w.drain()
-                sent.append(time.monotonic())
                 if c < clients - 1:
                     await asyncio.sleep(gap_ms / 1000)
-
-            async def one(c):
-                answer = await _read_reply(conns[c][0])
-                return c, time.monotonic(), answer
-
-            got = sorted(await asyncio.gather(*(one(c) for c in range(clients))), key=lambda g: g[1])
-            for c, t, answer in got:
-                rows.append({"id": c, "client": c, "round": r, "elapsed_ms": round((t - sent[c]) * 1000, 3),
-                             "recv_ms": round((t - t0) * 1000, 3), "answer": answer})
-                if on_row:
-                    on_row(rows[-1])
+            waiting = asyncio.create_task(done[r].wait())
+            while not done[r].is_set():
+                await asyncio.wait([waiting, *(t for t in readers if not t.done())],
+                                   return_when=asyncio.FIRST_COMPLETED)
+                for t in readers:
+                    if t.done() and not t.cancelled() and t.exception() is not None:
+                        waiting.cancel()
+                        raise t.exception()
     finally:
+        for t in readers:
+            t.cancel()
         for _, w in conns:
             w.close()
     return rows
