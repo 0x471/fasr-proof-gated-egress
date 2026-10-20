@@ -22,12 +22,14 @@
 | `docs/ATTACKS.md` | Every catalogued scenario, its result and its evidence |
 | `docs/SERVICE_SPEC.md` | The gate service's exact behaviour |
 | `docs/BINDING_SPEC.md` | The request-binding rules, pitfalls and test vectors |
+| `docs/EXPERIMENT_PROTOCOL.md` | The spin repeat's protocol, written before the data |
+| `docs/results/` | Complete analysis output for registered experiments |
 
 ## Tests and experiments
 
 | Path | What it is |
 |---|---|
-| `tests/` | Unit tests, comparisons against EZKL's own encoding, end-to-end checks, a parser fuzz test, service tests including the leakage encoders |
+| `tests/` | Unit tests, comparisons against EZKL's own encoding, end-to-end checks, a parser fuzz test, service tests including the leakage encoders, and `test_docs.py`, which fails when a fact copied between pages drifts from its home |
 | `tests/fixtures/` | Two pinned test models: `tiny` (4 inputs, 3 outputs, with its input range in `domain.json`) and `multi` (two inputs, two outputs) |
 | `prover/server.py` | The laptop AI server: honest, or misbehaving in one of several ways, including hiding bits in timing, order or failures |
 | `observer/client.py` | The outside observer: sends questions, records each answer and its time, decodes hidden bits |

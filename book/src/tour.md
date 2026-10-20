@@ -124,7 +124,7 @@ Once the proof fixes what an answer says, the server's remaining levers are when
 | Immediate (v0) | as soon as it is decided | nothing | nothing |
 | Arrival (v1 default) | after every earlier question's answer | the server choosing the order | a slow answer holds up the ones behind it, up to its deadline |
 | Fixed | in arrival order, and not before admission + deadline (4 s in the tests) | order, and the timing codes we tried | every answer waits the whole budget; a check not done by then is `unavailable` |
-| Fixed + spin 5 ms | as fixed, but the timer wakes 5 ms early and busy-waits to the exact time | no average sub-millisecond shift was detected; whether a weaker trace remains is not settled | a little CPU; no callback blocks the loop for more than the spin (K35) |
+| Fixed + spin 5 ms | as fixed, but the timer wakes 5 ms early and busy-waits until the release time | no average sub-millisecond shift was detected; whether a weaker trace remains is not settled | a little CPU; no callback blocks the loop for more than the spin (K35) |
 
 - **Halt** (`--halt-after N`, off by default): after N server-caused failures the gate stops every successful answer: pending and held ones become `unavailable`, and so do later requests. Error replies keep flowing. It caps damage but lets the server switch the gate off, and where the halting failure fell, and the timing of the errors, still leak.
 - **Capacity:** at most `max_pending` (default 32) admitted questions wait at once, held answers included; beyond that the gate answers `unavailable` straight away.

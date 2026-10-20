@@ -45,9 +45,9 @@ OUT=runs/matrix device/pi_matrix.sh          # release policies x channels, 4 s 
 python3 observer/analyze_matrix.py runs/matrix
 ```
 
-`device/pi_scenario.sh NAME RELEASE N BATCH -- SERVER_ARGS` runs one scenario: it starts the prover in the given mode on this machine and the gate on the Pi, sends `N` requests (in batches of `BATCH`), and writes the traces and both logs to `OUT/NAME.*`. `DEADLINE` sets the gate's deadline, which with `fixed` release is also the release time.
+`device/pi_scenario.sh NAME RELEASE N BATCH -- SERVER_ARGS` runs one scenario: it starts the prover in the given mode on this machine and the gate on the Pi, sends `N` requests (in batches of `BATCH`, or one per connection per round with `CLIENTS`), and writes the traces and both logs to `OUT/NAME.*`. `DEADLINE` sets the gate's deadline, which with `fixed` release is also the release time; `SPIN_MS` sets the spin. It refuses to start if the checkout has uncommitted changes, if the Pi's gate code differs from it, or if the Pi's pins or domain file differ.
 
-The residual-timing test (128 random bits plus an honest control; add `SPIN_MS=5` to both scenario commands for the spin version). Every scenario writes a manifest (`OUT/NAME.manifest.json`: commit, settings, exit status, row count) and exits non-zero if the observer failed or got fewer rows than asked for.
+The residual-timing test (128 random bits plus an honest control; add `SPIN_MS=5` to both scenario commands for the spin version). Every scenario writes a manifest (`OUT/NAME.manifest.json`: the commit taken before the run, the settings, the hashes of what ran on the Pi (gate code, bundle, pins, domain, EZKL CLI, Python), the server's arguments, exit status, row count, whether the gate logs were copied) and exits non-zero if the observer failed, got fewer rows than asked for, or the logs weren't copied. The analysis scripts refuse a trace whose rows don't match the bits one for one. The pre-registered spin repeat and its exact commands are in `docs/EXPERIMENT_PROTOCOL.md`.
 
 ```sh
 B=$(python3 -c "import random; r=random.Random(20261019); print(''.join(r.choice('01') for _ in range(128)))")

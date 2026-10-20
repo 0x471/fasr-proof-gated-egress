@@ -37,3 +37,6 @@ python3 observer/jitter_test.py runs/spin5_512/timing_spin5_512.trace.jsonl $B -
 python3 observer/estimate.py runs/spin5_512/timing_spin5_512.trace.jsonl $B --bins 4 --control runs/spin5_512/honest_spin5_512.trace.jsonl
 ```
 Each scenario takes about 35 minutes (512 answers at 4 s).
+
+## Outcome (added after the runs, 20 Oct 2026)
+Inconclusive under the decision rule: signal p = 0.041, honest control p = 0.77. Complete output: `docs/results/2026-10-20_spin5_512.md`. Deviations: the first attempt at both runs stopped at 149 of 512 answers (the observer's time limit was fixed at 600 s) and was repeated in full; the rule above was not changed. Reported in `book/src/results.md` and `docs/ATTACKS.md` K8.
