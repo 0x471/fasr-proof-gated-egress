@@ -8,20 +8,26 @@
 # SPIN_MS (default 0): with fixed release, wake this many ms early and busy-wait until the release time.
 # CLIENTS (default 1): with more than 1, that many connections each send one request per round (N rounds).
 # The observer runs with /usr/bin/python3: on macOS a Homebrew Python may lack Local Network access.
+# The checkout must be clean: the manifest names its commit, taken before the run, and the hashes
+# of what the Pi ran (gate code, bundle, pins, domain, EZKL CLI, Python). A run is "ok" only if the
+# client finished, every row arrived and both gate logs were copied back.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 OUT="${OUT:-runs}"
 DEADLINE="${DEADLINE:-10}"
 SPIN_MS="${SPIN_MS:-0}"
 CLIENTS="${CLIENTS:-1}"
-mkdir -p "$OUT"
-STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 NAME=$1 RELEASE=$2 N=$3 BATCH=$4; shift 5
 # These go into a command run by the Pi's shell, so only plain values are allowed.
 [[ "$NAME" =~ ^[A-Za-z0-9_]+$ ]] || { echo "bad NAME"; exit 2; }
 [[ "$RELEASE" =~ ^(immediate|arrival|fixed)$ ]] || { echo "bad RELEASE"; exit 2; }
 [[ "$N" =~ ^[1-9][0-9]{0,4}$ && "$BATCH" =~ ^[1-9][0-9]{0,3}$ && "$CLIENTS" =~ ^[1-9][0-9]?$ ]] || { echo "bad N, BATCH or CLIENTS"; exit 2; }
-[[ "$DEADLINE" =~ ^[0-9]+(\.[0-9]+)?$ && "$SPIN_MS" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "bad DEADLINE or SPIN_MS"; exit 2; }
+num='^(0|[1-9][0-9]*)(\.[0-9]+)?$'
+[[ "$DEADLINE" =~ $num && "$SPIN_MS" =~ $num ]] || { echo "bad DEADLINE or SPIN_MS"; exit 2; }
+[[ -z "$(git status --porcelain)" ]] || { echo "$NAME: the checkout has changes; commit them first"; exit 2; }
+COMMIT="$(git rev-parse HEAD)"
+STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+mkdir -p "$OUT"
 X='[[0.5, -0.2, 0.9, 0.1]]'
 cleanup() {
   ssh -n p01 "pkill -f '[f]rom pge.service import main'; true"
@@ -34,6 +40,12 @@ trap cleanup EXIT
 here="$(cd pge && shasum -a 256 *.py | LC_ALL=C sort -k2 | shasum -a 256 | cut -c1-16)"
 there="$(ssh -n p01 'cd ~/p01-v1/pge && sha256sum *.py | LC_ALL=C sort -k2 | sha256sum | cut -c1-16')"
 [[ "$here" == "$there" ]] || { echo "$NAME: the Pi's pge differs from this checkout; redeploy: git archive HEAD | ssh p01 'cd ~/p01-v1 && tar -x'"; exit 1; }
+# Everything else the gate's verdicts depend on. The gate checks the bundle against the pins itself.
+pi_files="$(ssh -n p01 'cd ~/p01-v1 && sha256sum bundle/* device/tiny.sha256 tests/fixtures/tiny/domain.json /home/bob/p01-v0/ezkl "$(readlink -f "$(command -v python3)")" && python3 --version')" \
+  || { echo "$NAME: could not hash the Pi's files"; exit 1; }
+for f in device/tiny.sha256 tests/fixtures/tiny/domain.json; do
+  [[ "$pi_files" == *"$(shasum -a 256 "$f" | cut -d' ' -f1)  $f"* ]] || { echo "$NAME: the Pi's $f differs from this checkout"; exit 1; }
+done
 ssh -n p01 "ss -ltn | grep -q ':8700 '" && { echo "$NAME: port 8700 still busy"; exit 1; }
 .venv/bin/python prover/server.py --listen 192.168.2.1:8701 "$@" 2>"$OUT/$NAME.server.log" &
 for i in $(seq 120); do grep -q listening "$OUT/$NAME.server.log" && break; sleep 0.5; done
@@ -53,11 +65,24 @@ timeout "$limit" /usr/bin/python3 observer/client.py 192.168.2.2 8700 "$X" --n "
 rc=$?
 rows=$(wc -l < "$OUT/$NAME.trace.jsonl" | tr -d ' ')
 sleep 0.5
-ssh -n p01 "cat ~/gate_$NAME.log" > "$OUT/$NAME.gate.jsonl"
-ssh -n p01 "cat ~/gate_$NAME.err" > "$OUT/$NAME.gate.err"
+logs=0
+ssh -n p01 "cat ~/gate_$NAME.log" > "$OUT/$NAME.gate.jsonl" && [[ -s "$OUT/$NAME.gate.jsonl" ]] || logs=1
+ssh -n p01 "cat ~/gate_$NAME.err" > "$OUT/$NAME.gate.err" || logs=1
 status=ok
-[[ $rc == 0 && $rows == "$WANT" ]] || status=failed
-printf '{"name": "%s", "release": "%s", "n": %s, "batch": %s, "clients": %s, "deadline": %s, "spin_ms": %s, "commit": "%s", "pge_sha256": "%s", "started": "%s", "client_exit": %s, "rows": %s, "status": "%s", "server_args": "%s"}\n' \
-  "$NAME" "$RELEASE" "$N" "$BATCH" "$CLIENTS" "$DEADLINE" "$SPIN_MS" "$(git rev-parse --short HEAD)" "$here" "$STARTED" "$rc" "$rows" "$status" "$*" > "$OUT/$NAME.manifest.json"
-echo "$NAME: client exit $rc rows $rows/$WANT $status"
+[[ $rc == 0 && $rows == "$WANT" && $logs == 0 ]] || status=failed
+NAME="$NAME" RELEASE="$RELEASE" N="$N" BATCH="$BATCH" CLIENTS="$CLIENTS" DEADLINE="$DEADLINE" SPIN_MS="$SPIN_MS" \
+COMMIT="$COMMIT" HERE="$here" STARTED="$STARTED" RC="$rc" ROWS="$rows" LOGS="$logs" STATUS="$status" PI_FILES="$pi_files" \
+  /usr/bin/python3 -I -c '
+import json, os, sys
+e = os.environ
+lines = e["PI_FILES"].splitlines()
+files = dict(reversed(l.split("  ", 1)) for l in lines if "  " in l)
+m = {"name": e["NAME"], "release": e["RELEASE"], "n": int(e["N"]), "batch": int(e["BATCH"]),
+     "clients": int(e["CLIENTS"]), "deadline": float(e["DEADLINE"]), "spin_ms": float(e["SPIN_MS"]),
+     "commit": e["COMMIT"], "pge_sha256": e["HERE"], "pi_sha256": files,
+     "pi_python": [l for l in lines if l.startswith("Python ")], "started": e["STARTED"],
+     "client_exit": int(e["RC"]), "rows": int(e["ROWS"]), "logs_copied": e["LOGS"] == "0",
+     "status": e["STATUS"], "server_args": sys.argv[1:]}
+print(json.dumps(m))' "$@" > "$OUT/$NAME.manifest.json" || status=failed
+echo "$NAME: client exit $rc rows $rows/$WANT logs $([[ $logs == 0 ]] && echo copied || echo missing) $status"
 [[ $status == ok ]]
