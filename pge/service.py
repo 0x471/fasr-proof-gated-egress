@@ -124,7 +124,7 @@ class Gate:
     # Decided answers waiting for every earlier seq to be released (arrival order).
     _held: dict[int, tuple[_Pending, bytes, str, str]] = field(default_factory=dict)
     _next_release: int = 1
-    _pump_timer: asyncio.TimerHandle | None = None
+    _pump_timer: asyncio.Handle | None = None
     _server: asyncio.StreamWriter | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _pool: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1))
@@ -172,7 +172,11 @@ class Gate:
             return
         self._held[p.seq] = (p, msg, result, reason)
         if self.policy.release == "fixed":
-            self._pump()
+            # Pump in a callback of its own: a disconnect or halt releases many answers in one
+            # callback, and pumping inline there would chain one busy-wait per answer.
+            if self._pump_timer is not None:
+                self._pump_timer.cancel()
+            self._pump_timer = asyncio.get_running_loop().call_soon(self._pump)
             return
         while self._next_release in self._held:
             p, msg, result, reason = self._held.pop(self._next_release)
@@ -190,8 +194,8 @@ class Gate:
         """Fixed release: send held answers in seq order, each no earlier than its deadline.
 
         Only the next answer in order waits, so an earlier undecided request can't be overtaken.
-        With spin, the timer fires early and the last stretch is a busy-wait; after one busy-wait
-        the loop yields before the next, so the event loop is never blocked for more than spin.
+        With spin, the timer fires early and the last stretch is a busy-wait. Each run busy-waits
+        at most once and _release only schedules runs, so no callback blocks the loop for more than spin.
         """
         if self._pump_timer is not None:
             self._pump_timer.cancel()
