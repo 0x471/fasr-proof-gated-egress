@@ -17,7 +17,7 @@
 - **Several clients at once,** other loads, and a packet capture on the outside link (packet sizes and TCP behaviour are still the stock OS's).
 - **The `busy` channel:** a server that holds requests open makes other clients' requests fail; it depends on load and is not measured.
 - **The budget trade-off:** fixed release was run with one budget (4 s); leakage and lost answers against the budget are not measured.
-- **The residual timing trace** under fixed release: its mechanism, and whether the redesigned spin (waking early and waiting precisely) removes it. Spin removed the average shift in one 128-answer run but probably not all of the signal, and that run used an earlier version of the spin code; it needs repeating with more answers, finer timestamps and several clients.
+- **The residual timing trace** under fixed release: its mechanism, and whether the redesigned spin (waking early and waiting precisely) removes it. Spin removed the average shift; a 512-answer repeat with the fixed code and microsecond times was inconclusive (best decoder about 56 % right, p = 0.041). Settling it needs more answers, and several clients are untested.
 
 ## Assumptions the results rest on
 
