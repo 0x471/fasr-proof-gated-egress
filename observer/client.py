@@ -5,7 +5,10 @@ X_JSON is one request's x, e.g. '[[0.5, -0.2, 0.9, 0.1]]'. Each output line is
 {"id", "elapsed_ms", "answer"}, printed as each answer arrives; elapsed_ms (to the microsecond) runs
 from sending the request to reading its answer.
 With --batch K, K requests are sent at once and their answers read in arrival order, so the
-rows show the order in which the gate released them.
+rows show the order in which the gate released them. With --clients C, C connections each send one
+request per round (client 0 first, --gap-ms apart, so the gate admits them in client order); each
+row also has "client", "round" and "recv_ms" (receive time since the start), and rows are in the
+order answers arrived across all connections.
 Requests and answers use the gate's binary format (pge/protocol.py); the observer needs no
 bundle, so it sizes requests from x and answers from their frame length (y comes back flat).
 """
@@ -69,6 +72,49 @@ async def trace_batches(host: str, port: int, xs: list, batch: int, on_row=None)
     return rows
 
 
+async def _read_reply(reader: asyncio.StreamReader) -> dict:
+    n = struct.unpack(">I", await reader.readexactly(4))[0]
+    if n < 10 or (n - 10) % 8:
+        raise ValueError(f"reply of {n} bytes is not a gate reply")
+    return Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
+
+
+async def trace_clients(host: str, port: int, x: list, clients: int, rounds: int, gap_ms: float = 2.0,
+                        on_row=None) -> list[dict]:
+    """Several connections, one request each per round; rows in arrival order across connections.
+
+    "id" is the client index, so the batch decoders read the order across connections.
+    """
+    conns = [await asyncio.open_connection(host, port) for _ in range(clients)]
+    body = lambda rid: frame(Wire(tuple(len(t) for t in x), ()).encode_request(rid, x))
+    rows = []
+    t0 = time.monotonic()
+    try:
+        for r in range(rounds):
+            sent = []
+            for c, (_, w) in enumerate(conns):
+                w.write(body(r))
+                await w.drain()
+                sent.append(time.monotonic())
+                if c < clients - 1:
+                    await asyncio.sleep(gap_ms / 1000)
+
+            async def one(c):
+                answer = await _read_reply(conns[c][0])
+                return c, time.monotonic(), answer
+
+            got = sorted(await asyncio.gather(*(one(c) for c in range(clients))), key=lambda g: g[1])
+            for c, t, answer in got:
+                rows.append({"id": c, "client": c, "round": r, "elapsed_ms": round((t - sent[c]) * 1000, 3),
+                             "recv_ms": round((t - t0) * 1000, 3), "answer": answer})
+                if on_row:
+                    on_row(rows[-1])
+    finally:
+        for _, w in conns:
+            w.close()
+    return rows
+
+
 def order_index(order: list[int]) -> int:
     """Lexicographic index of a permutation of range(len(order))."""
     items, v = sorted(order), 0
@@ -123,10 +169,17 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("x", help="one request's x as JSON")
     ap.add_argument("--n", type=int, default=1)
     ap.add_argument("--batch", type=int, default=1)
+    ap.add_argument("--clients", type=int, default=1, help="connections, one request each per round (--n rounds)")
+    ap.add_argument("--gap-ms", type=float, default=2.0)
     a = ap.parse_args(argv)
     xs = [json.loads(a.x)] * a.n
     emit = lambda row: print(json.dumps(row), flush=True)
-    asyncio.run(trace_batches(a.host, a.port, xs, a.batch, emit) if a.batch > 1 else trace(a.host, a.port, xs, emit))
+    if a.clients > 1:
+        asyncio.run(trace_clients(a.host, a.port, json.loads(a.x), a.clients, a.n, a.gap_ms, emit))
+    elif a.batch > 1:
+        asyncio.run(trace_batches(a.host, a.port, xs, a.batch, emit))
+    else:
+        asyncio.run(trace(a.host, a.port, xs, emit))
 
 
 if __name__ == "__main__":

@@ -1119,3 +1119,20 @@ def test_order_decoder_marks_bad_batches_and_stays_aligned():
     assert decode_order_bits(rows([2, 1, 0, 3, 4, 5]), 3) == "??00"  # rank 5 is never sent for 2 bits
     assert decode_order_bits(rows([0, 0, 2, 4, 3, 5]), 3) == "??10"  # duplicate id; [4, 3, 5] is rank 2
     assert decode_order_bits(rows([1, 0, 2, 3, 5, 4]), 3) == "1001"
+
+
+@pytest.mark.parametrize("release, leaked", [("immediate", True), ("arrival", False), ("fixed", False)])
+def test_order_across_connections(tiny_bundle, verifier, release, leaked):
+    # Three clients, one request each per round: the server orders the three answers to send 2 bits.
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import decode_order_bits, trace_clients
+
+    bits = "10110100"
+
+    async def t(st):
+        port = st.servers[1].sockets[0].getsockname()[1]
+        rows = await trace_clients("127.0.0.1", port, [TINY_X], 3, 4, gap_ms=5)
+        assert len(rows) == 12 and all(r["answer"]["ok"] for r in rows)
+        assert decode_order_bits(rows, 3) == (bits if leaked else "0" * len(bits))
+    run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "order_bits", bits=bits, batch=3),
+              policy=Policy(deadline=1.0, release=release))
