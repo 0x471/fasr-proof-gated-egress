@@ -22,22 +22,26 @@ A valid proof stops the server from changing **what** an answer says. It doesn't
 
 ## What we found
 
+<!-- ANCHOR: findings -->
 | Way to smuggle data out | Basic gate | Best gate so far | What it costs |
 |---|---|---|---|
 | Change what an answer says | Blocked by the proof | Blocked | Each check takes about 0.24 s on the Pi |
 | Reorder answers | Leaks | **The ordering code we tried no longer gets through**: answers leave in the order questions arrived | A slow answer delays the ones behind it |
-| Delay answers | Leaks | **Much reduced**: every answer leaves at a set time; a small trace remains | Answers take 4 s instead of 0.8 s |
+| Delay answers | Leaks | **Much reduced**: each answer has a set release time and can't leave before it; a small trace remained without spin, and with spin a 512-answer test was inconclusive | Answers take 4 s instead of 0.8 s |
 | Fail chosen answers on purpose | Leaks | **Still leaks** | Open problem |
+<!-- ANCHOR_END: findings -->
 
-Measured on a real Raspberry Pi 4 with one client at a time and one tiny test model; the rates are for the encoders we tried, not limits on what an attacker could do. The attack catalogue has 34 scenarios, each with its evidence: 23 stopped, 2 allowed on purpose, 7 still work, are only partly stopped or are untested, 2 out of scope. The counts describe coverage, not a security score.
+Measured on a real Raspberry Pi 4 with one client at a time and one tiny test model; the rates are for the encoders we tried, not limits on what an attacker could do. Every scenario we catalogued, with its evidence, is in the [attack catalogue](docs/ATTACKS.md).
 
 ## Status
 
+<!-- ANCHOR: status -->
 | Version | What it is | Status |
 |---|---|---|
 | v0 | The checking software on the Pi's standard operating system | Done and measured |
-| v1 | Stricter software on a stripped-down system with nothing else running | Software done and measured; the stripped system boots, the software isn't on it yet |
-| v2 | Fixed release times, secure boot, signed updates | Fixed release done; the rest planned |
+| v1 | Stricter software (fixed message format, release in arrival order or at a fixed time, contained checker, fixed-word logs) on a stripped-down system with nothing else running | Software done and measured on the standard system; the stripped system boots, the software isn't on it yet |
+| v2 | Secure boot, signed versioned updates, fixed time slots, a hash-chained log | Planned |
+<!-- ANCHOR_END: status -->
 
 ## Read more
 
