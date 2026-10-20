@@ -1,0 +1,13 @@
+stateDiagram-v2
+    [*] --> Pending: admitted, deadline timer started
+    Pending --> Checking: first answer for this seq
+    Pending --> Decided: deadline, link lost or halt
+    Checking --> Decided: ACCEPT, REJECT or ERROR
+    Decided --> Sent: immediate rule
+    Decided --> Held: arrival or fixed rule
+    Held --> Sent: earlier seqs sent, and for fixed its deadline reached
+    Sent --> [*]
+    note right of Held
+        If a halt comes first,
+        it is sent as unavailable
+    end note

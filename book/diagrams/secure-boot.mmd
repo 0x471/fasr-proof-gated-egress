@@ -1,0 +1,5 @@
+flowchart TD
+    OTP["Hash of our public key<br/>burned once into the chip's OTP memory"] --> BL["Boot ROM and EEPROM bootloader"]
+    BL -->|"checks the signature"| IMG["Signed boot image<br/>kernel, system and gate"]
+    IMG -->|"valid"| RUN["Pi boots"]
+    IMG -->|"modified or unsigned"| HALT["Pi refuses to boot"]

@@ -1,0 +1,6 @@
+flowchart TD
+    B["Planted bits, seeded random"] --> ENC["Server encoder<br/>delay, reorder or fail on purpose"]
+    ENC -->|"answers with valid proofs"| GATE["Gate on the Pi<br/>one release rule"]
+    GATE -->|"replies"| OBS["Observer<br/>records each reply and its arrival time"]
+    OBS --> DEC["Decoder reads the bits back"]
+    DEC --> CMP["Compare with the planted bits<br/>repeat with an honest server as control"]

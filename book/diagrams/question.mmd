@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant U as User
+    participant G as Gate on the Pi
+    participant S as Server
+    participant C as EZKL CLI child
+    U->>G: question x, 41-byte frame
+    G->>G: parse, encode x like EZKL, check x is answerable
+    alt malformed frame or impossible x
+        G-->>U: bad_request, server never sees it
+    else admitted
+        G->>G: assign seq, start deadline timer
+        G->>S: seq, x
+        S->>G: seq, outputs, proof
+        G->>G: first answer for this seq only, proof exactly 3072 bytes
+        G->>G: instances = own encoding of x + server outputs
+        G->>C: verify instances and proof, time left as the limit
+        C-->>G: ACCEPT, REJECT or ERROR
+        alt ACCEPT before the deadline
+            G-->>U: y decoded from the verified outputs, 34 bytes
+        else anything else
+            G-->>U: unavailable, 34 bytes
+        end
+    end

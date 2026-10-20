@@ -1,0 +1,3 @@
+flowchart TD
+    V0["v0 baseline<br/>stock Pi OS, ssh and mDNS listening<br/>files copied over ssh"] --> V1["v1 stripped<br/>Buildroot image, only the gate<br/>read-only, two ports, no remote login"]
+    V1 --> V2["v2 hardened<br/>secure boot, signed versioned updates<br/>fixed time slots, hash-chained log"]
