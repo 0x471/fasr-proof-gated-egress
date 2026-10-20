@@ -2,7 +2,7 @@
 
 > **In short**
 > - A proof fixes what an answer says, but a hacked server still controls **when** it answers, **in what order**, and **which answers fail**. Each of these can carry hidden data.
-> - On the real device, with one client at a time: releasing answers in arrival order stopped the ordering code we tried, and releasing every answer at a fixed time stopped the timing code we tried, at the cost of speed. A small timing trace remained.
+> - On the real device, with one client at a time: releasing answers in arrival order stopped the ordering code we tried, and releasing every answer at a fixed time stopped the timing code we tried, at the cost of speed. A small timing trace remained without spin; with spin, a 512-answer test was inconclusive.
 > - Deliberate failures leaked under every release rule we tried. This is the main open problem.
 
 ## Why a proof isn't enough
@@ -11,7 +11,7 @@ Think of the gate as a strict customs officer who checks that every parcel's con
 
 ## How we tested it
 
-We made the server hide a known message (16 bits) in its behaviour, and had an observer outside the gate try to read it back with a fixed decoder. If the observer recovers all 16 bits, that channel is open. If the decoder fails, that particular way of signalling no longer works; a different encoder or a smarter observer might still get something through, which is why the leftover trace was tested separately (below).
+We made the server hide a known message (16 bits) in its behaviour, and had an observer outside the gate try to read it back with a fixed decoder. If the observer recovers all 16 bits, that channel is open. If the decoder fails, it didn't recover that message in that run; a different encoder or a smarter observer might still get something through, which is why the leftover trace was tested separately (below).
 
 We did this on the real Raspberry Pi for three ways of signalling and three release rules, with a 4-second budget for the fixed-time rule, one client at a time.
 
@@ -28,7 +28,7 @@ What this means:
 
 - **Order is easy to protect.** Sending answers back in the order the questions arrived removes the server's choice: the observer decoded the same bits whatever the server planted.
 - **Timing costs speed to protect.** The gate aims to send every answer 4 seconds after its question, so a delay chosen by the server no longer shows in a simple way. But every user now waits 4 seconds, even when the answer was ready in under one.
-- **A small timing trace was left.** With the fixed time, answers still left about 0.66 ms earlier or later depending on what the server did, enough for a decoder to get about three bits in four right. Waking a few milliseconds early and waiting precisely removed the average difference. A 512-answer repeat with a protocol fixed in advance was inconclusive: the best decoder got about 56 % right (p = 0.041, short of the 0.01 the protocol required to call it a leak). So what this decoder finds is small, but the trace isn't shown to be gone, and a cleverer decoder might find more.
+- **A small timing trace was left.** With the fixed time, answers still left about 0.66 ms earlier or later depending on what the server did, enough for a decoder to get about three bits in four right. With the gate waking a few milliseconds early and waiting precisely, no average difference was detected. A 512-answer repeat with a protocol fixed in advance was inconclusive: the best decoder got about 56 % right (p = 0.041, short of the 0.01 the protocol required to call it a leak). So what this decoder finds is small, but the trace isn't shown to be gone, and a cleverer decoder might find more.
 - **Failures stay open.** The server can always make an answer fail by sending a bad proof, and which answers fail is itself the message: choosing one failure in every 16 answers sent 4 bits per 16 answers. Here only 4 of 64 answers failed, yet all 16 bits got through.
 
 ## Closing the failure channel

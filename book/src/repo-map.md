@@ -19,7 +19,7 @@
 | File | What it covers |
 |---|---|
 | `docs/THREAT_MODEL.md` | Assets, attackers, trust boundaries, assumptions, attack surface, side channels and their status, the MITRE ATLAS mapping |
-| `docs/ATTACKS.md` | Every attack tried, its result and the test that covers it |
+| `docs/ATTACKS.md` | Every catalogued scenario, its result and its evidence |
 | `docs/SERVICE_SPEC.md` | The gate service's exact behaviour |
 | `docs/BINDING_SPEC.md` | The request-binding rules, pitfalls and test vectors |
 

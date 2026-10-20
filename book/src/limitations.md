@@ -13,17 +13,17 @@
 
 ## Not measured yet
 
-- **A capacity estimate.** The numbers are achieved rates for planted bits. An estimator validated on synthetic channels with known capacity comes next, before claiming any bound.
+- **A capacity bound.** The numbers are achieved rates for planted bits and one binned mutual-information statistic (`observer/estimate.py`, checked on synthetic channels with known values). Checking an estimator on known distributions is not a bound on what an arbitrary encoder and observer can achieve; no such bound is claimed.
 - **Several clients at once,** other loads, and a packet capture on the outside link (packet sizes and TCP behaviour are still the stock OS's).
 - **The `busy` channel:** a server that holds requests open makes other clients' requests fail; it depends on load and is not measured.
 - **The budget trade-off:** fixed release was run with one budget (4 s); leakage and lost answers against the budget are not measured.
-- **The residual timing trace** under fixed release: its mechanism, and whether the redesigned spin (waking early and waiting precisely) removes it. Spin removed the average shift; a 512-answer repeat with the fixed code and microsecond times was inconclusive (the held-out decoder about 56 % right on its better half, p = 0.041). Settling it needs more answers, and several clients are untested.
+- **The residual timing trace** under fixed release: its mechanism, and whether the redesigned spin (waking early and waiting precisely) removes it. With spin no mean shift was detected; a 512-answer repeat with the fixed code and microsecond times was inconclusive (the held-out decoder about 56 % right on its better half, p = 0.041). Settling it needs more answers, and several clients are untested.
 
 ## Assumptions the results rest on
 
 - Every path from the server to the outside goes through the device. On the v0 OS this is not enforced.
 - One pinned model and circuit; the binding rules are specific to EZKL 23.0.5.
-- The verifier binary, the bundle and the interpreter are trusted inputs of the image. The gate checks the bundle's hashes at load and before every check; the CLI's download is checked by its digest when it is fetched; the interpreter and the CLI on disk are not re-checked at run time, so they rely on the read-only image.
+- The verifier binary, the bundle, the domain file and the interpreter are trusted inputs of the image. The verifier is trusted, with its failures contained: if it wrongly said ACCEPT, the gate couldn't tell. The domain file is not among the bundle's pinned hashes; the experiment script checks it against the checkout and records its hash. The gate checks the bundle's hashes at load and before every check; the CLI's download is checked by its digest when it is fetched; the interpreter and the CLI on disk are not re-checked at run time, so they rely on the read-only image.
 - The proof system is sound. Its soundness is out of scope.
 
 ## Out of scope

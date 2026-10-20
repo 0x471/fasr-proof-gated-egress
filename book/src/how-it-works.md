@@ -2,12 +2,12 @@
 
 > **In short**
 > - The gate checks each answer's proof against the question **it** received, not against anything the server says about the question.
-> - It sends back either the proven answer or the fixed error `unavailable`, never anything the server wrote. (A malformed question gets `bad_request` before it reaches the server.)
+> - It sends back either the proven answer or the fixed error `unavailable`, never anything the server wrote. (A well-formed question the model can't answer gets `bad_request` before it reaches the server; a malformed message closes the connection.)
 > - It can release answers in three ways; the choice decides how much a hacked server can signal through timing and order.
 
 ## The life of one question
 
-1. **A user sends a question** to the gate. The gate checks it is well-formed and inside what the model can answer. If not, the user gets an error straight away and nothing reaches the server.
+1. **A user sends a question** to the gate. A malformed message closes the connection. A well-formed question outside what the model can answer gets `bad_request` straight away. Either way nothing reaches the server.
 2. **The gate forwards the question** to the AI server, tagged with the gate's own counter. The server doesn't get the client's id or connection, though it still sees the question itself and when it arrived.
 3. **The server answers** with an output and a proof that the approved model computed that output from that question.
 4. **The gate checks the proof.** It rebuilds what the proof must be about from its own copy of the question, uses only the approved model's pinned key, and runs the check with strict limits on time and memory.
@@ -31,7 +31,7 @@ The full rules are in the [Request binding specification](binding-spec.md).
 |---|---|---|---|
 | Immediate (v0) | As soon as it is checked | Nothing | None |
 | Arrival order (v1, the default) | After every earlier question's answer | Reordering (shown on one connection) | A slow answer holds up the ones behind it |
-| Fixed time | In arrival order, and not before a set time after its question (in practice within a few ms of it) | Reordering, and the timing codes we tried (a small trace remained) | Every answer waits the full time |
+| Fixed time | In arrival order, and never before a set time after its question (on the Pi, one client at a time with a 5 ms spin, answers reached the observer 0.96-3.84 ms after it) | Reordering, and the timing codes we tried (a small trace remained without spin) | Every answer waits the full time; under load answers can leave later |
 
 No release rule can stop the server from making chosen answers fail, because the server can always send a bad proof. That is the open problem described in [What a hacked server can still leak](leakage.md).
 
