@@ -6,19 +6,21 @@
 # ~/p01-v0/ezkl, this machine on 192.168.2.1 and the Pi on 192.168.2.2. Writes OUT/NAME.* files.
 # DEADLINE (seconds, default 10) is the gate's deadline, and with fixed release the release time.
 # SPIN_MS (default 0): with fixed release, wake this many ms early and busy-wait until the release time.
+# CLIENTS (default 1): with more than 1, that many connections each send one request per round (N rounds).
 # The observer runs with /usr/bin/python3: on macOS a Homebrew Python may lack Local Network access.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 OUT="${OUT:-runs}"
 DEADLINE="${DEADLINE:-10}"
 SPIN_MS="${SPIN_MS:-0}"
+CLIENTS="${CLIENTS:-1}"
 mkdir -p "$OUT"
 STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 NAME=$1 RELEASE=$2 N=$3 BATCH=$4; shift 5
 # These go into a command run by the Pi's shell, so only plain values are allowed.
 [[ "$NAME" =~ ^[A-Za-z0-9_]+$ ]] || { echo "bad NAME"; exit 2; }
 [[ "$RELEASE" =~ ^(immediate|arrival|fixed)$ ]] || { echo "bad RELEASE"; exit 2; }
-[[ "$N" =~ ^[1-9][0-9]{0,4}$ && "$BATCH" =~ ^[1-9][0-9]{0,3}$ ]] || { echo "bad N or BATCH"; exit 2; }
+[[ "$N" =~ ^[1-9][0-9]{0,4}$ && "$BATCH" =~ ^[1-9][0-9]{0,3}$ && "$CLIENTS" =~ ^[1-9][0-9]?$ ]] || { echo "bad N, BATCH or CLIENTS"; exit 2; }
 [[ "$DEADLINE" =~ ^[0-9]+(\.[0-9]+)?$ && "$SPIN_MS" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "bad DEADLINE or SPIN_MS"; exit 2; }
 X='[[0.5, -0.2, 0.9, 0.1]]'
 cleanup() {
@@ -43,7 +45,8 @@ for i in $(seq 40); do
   sleep 0.25
 done
 [ $ok = 1 ] || { echo "$NAME: gate not up"; ssh -n p01 "cat ~/gate_$NAME.err" | tail -3; cleanup; exit 1; }
-if [ "$BATCH" -gt 1 ]; then B="--batch $BATCH"; else B=""; fi
+if [ "$CLIENTS" -gt 1 ]; then B="--clients $CLIENTS"; elif [ "$BATCH" -gt 1 ]; then B="--batch $BATCH"; else B=""; fi
+WANT=$(( CLIENTS > 1 ? N * CLIENTS : N ))
 # Each answer can take up to the deadline plus a check, so the client's limit grows with N.
 limit=$(awk -v n="$N" -v d="$DEADLINE" 'BEGIN { printf "%d", n * (d + 3) + 120 }')
 timeout "$limit" /usr/bin/python3 observer/client.py 192.168.2.2 8700 "$X" --n "$N" $B > "$OUT/$NAME.trace.jsonl" 2>"$OUT/$NAME.client.err"
@@ -53,8 +56,8 @@ sleep 0.5
 ssh -n p01 "cat ~/gate_$NAME.log" > "$OUT/$NAME.gate.jsonl"
 ssh -n p01 "cat ~/gate_$NAME.err" > "$OUT/$NAME.gate.err"
 status=ok
-[[ $rc == 0 && $rows == "$N" ]] || status=failed
-printf '{"name": "%s", "release": "%s", "n": %s, "batch": %s, "deadline": %s, "spin_ms": %s, "commit": "%s", "pge_sha256": "%s", "started": "%s", "client_exit": %s, "rows": %s, "status": "%s", "server_args": "%s"}\n' \
-  "$NAME" "$RELEASE" "$N" "$BATCH" "$DEADLINE" "$SPIN_MS" "$(git rev-parse --short HEAD)" "$here" "$STARTED" "$rc" "$rows" "$status" "$*" > "$OUT/$NAME.manifest.json"
-echo "$NAME: client exit $rc rows $rows/$N $status"
+[[ $rc == 0 && $rows == "$WANT" ]] || status=failed
+printf '{"name": "%s", "release": "%s", "n": %s, "batch": %s, "clients": %s, "deadline": %s, "spin_ms": %s, "commit": "%s", "pge_sha256": "%s", "started": "%s", "client_exit": %s, "rows": %s, "status": "%s", "server_args": "%s"}\n' \
+  "$NAME" "$RELEASE" "$N" "$BATCH" "$CLIENTS" "$DEADLINE" "$SPIN_MS" "$(git rev-parse --short HEAD)" "$here" "$STARTED" "$rc" "$rows" "$status" "$*" > "$OUT/$NAME.manifest.json"
+echo "$NAME: client exit $rc rows $rows/$WANT $status"
 [[ $status == ok ]]
