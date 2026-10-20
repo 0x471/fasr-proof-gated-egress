@@ -3,9 +3,11 @@ sequenceDiagram
     participant G as Gate on the Pi
     participant S as Server
     participant C as EZKL CLI child
-    U->>G: question x, 41-byte frame
+    U->>G: question x, 41-byte payload
     G->>G: parse, encode x like EZKL, check x is answerable
-    alt malformed frame or impossible x
+    alt malformed message
+        G-->>U: connection closed, server never sees it
+    else impossible x
         G-->>U: bad_request, server never sees it
     else admitted
         G->>G: assign seq, start deadline timer
