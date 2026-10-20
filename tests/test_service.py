@@ -1229,3 +1229,11 @@ def test_trace_clients_streams_rows_while_one_client_waits():
         srv.close()
         assert [r["client"] for r in seen] == [0, 1]
     asyncio.run(go())
+
+
+@pytest.mark.parametrize("batch", [0, 1, 3, 12])
+def test_failure_decoder_refuses_batches_the_encoder_cannot_use(batch):
+    sys.path.insert(0, str(ROOT / "observer"))
+    from client import decode_failure_position
+    with pytest.raises(ValueError):
+        decode_failure_position([{"answer": {"ok": True}}] * 12, batch)

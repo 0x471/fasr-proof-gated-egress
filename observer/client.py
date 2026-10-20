@@ -166,6 +166,8 @@ def decode_order_bits(rows: list[dict], batch: int) -> str:
 
 def decode_failure_position(rows: list[dict], batch: int) -> str:
     """Read log2(batch) bits per full batch from which answer failed; "?" when not exactly one did."""
+    if batch < 2 or batch & (batch - 1):
+        raise ValueError("batch must be a power of 2, as the encoder requires")
     k = batch.bit_length() - 1
     out = ""
     for i in range(0, len(rows) - batch + 1, batch):
