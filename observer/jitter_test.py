@@ -15,8 +15,20 @@ import random
 import statistics
 
 
-def load_ms(path: str) -> list[float]:
-    return [json.loads(line)["elapsed_ms"] for line in open(path) if line.strip()]
+def load_ms(path: str, bits: str) -> list[float]:
+    """Answer times of a sequential trace, refusing anything that doesn't line up with the bits.
+
+    Rows must be ids 0..n-1 in order, each answer for its own id, and exactly one row per bit.
+    """
+    if not bits or set(bits) - {"0", "1"}:
+        raise SystemExit("bits must be a non-empty string of 0 and 1")
+    rows = [json.loads(line) for line in open(path) if line.strip()]
+    if len(rows) != len(bits):
+        raise SystemExit(f"{path}: {len(rows)} rows for {len(bits)} bits")
+    for i, r in enumerate(rows):
+        if r.get("id") != i or r.get("answer", {}).get("id") != i:
+            raise SystemExit(f"{path}: row {i} is not the answer to request {i}")
+    return [r["elapsed_ms"] for r in rows]
 
 
 def mean_diff(ms: list[float], labels: str) -> float:
@@ -68,8 +80,6 @@ def heldout_errors(ms: list[float], labels: str) -> list[float]:
 
 def heldout_report(name: str, ms: list[float], labels: str, perms: int, seed: int = 3) -> None:
     """Held-out decoder errors, with a null that refits on shuffled labels and keeps the better half."""
-    n = min(len(ms), len(labels))
-    ms, labels = ms[:n], labels[:n]
     errs = heldout_errors(ms, labels)
     rng, lab, hits = random.Random(seed), list(labels), 0
     for _ in range(perms):
@@ -80,8 +90,7 @@ def heldout_report(name: str, ms: list[float], labels: str, perms: int, seed: in
 
 
 def report(name: str, ms: list[float], labels: str, perms: int) -> None:
-    n = min(len(ms), len(labels))
-    ms, labels = ms[:n], labels[:n]
+    n = len(ms)
     print(f"{name}: n={n} mean(1)-mean(0)={mean_diff(ms, labels):+.3f} ms  p={perm_p(ms, labels, perms):.4f}  "
           f"spread={max(ms) - min(ms):.1f} ms  best-threshold errors={best_threshold_errors(ms, labels)}/{n}")
 
@@ -95,13 +104,13 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--heldout", type=int, default=0, metavar="SHUFFLES",
                     help="also run the held-out decoder with this many null shuffles (e.g. 2000)")
     a = ap.parse_args(argv)
-    report("signal ", load_ms(a.trace), a.bits, a.perms)
+    report("signal ", load_ms(a.trace, a.bits), a.bits, a.perms)
     if a.control:
-        report("control", load_ms(a.control), a.bits, a.perms)
+        report("control", load_ms(a.control, a.bits), a.bits, a.perms)
     if a.heldout:
-        heldout_report("signal ", load_ms(a.trace), a.bits, a.heldout)
+        heldout_report("signal ", load_ms(a.trace, a.bits), a.bits, a.heldout)
         if a.control:
-            heldout_report("control", load_ms(a.control), a.bits, a.heldout)
+            heldout_report("control", load_ms(a.control, a.bits), a.bits, a.heldout)
 
 
 if __name__ == "__main__":

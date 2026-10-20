@@ -13,9 +13,10 @@ not the channel's capacity: a cleverer encoder or observer could do better.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import random
+
+from jitter_test import load_ms
 
 
 def entropy(counts: list[int]) -> float:
@@ -119,9 +120,7 @@ def main(argv: list[str] | None = None) -> None:
     for name, path in (("signal", a.trace), ("control", a.control)):
         if not path:
             continue
-        ms = [json.loads(line)["elapsed_ms"] for line in open(path) if line.strip()]
-        n = min(len(ms), len(bits))
-        r = estimate(bits[:n], ms[:n], a.bins)
+        r = estimate(bits, load_ms(path, a.bits), a.bins)
         print(f"{name}: n={r['n']} bins={r['bins']} I={r['mi']:.4f} bit/answer, 95% CI [{r['ci95'][0]:.4f}, "
               f"{r['ci95'][1]:.4f}], null 95th pct {r['null95']:.4f}, p={r['p']:.4f}")
 

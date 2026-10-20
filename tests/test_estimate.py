@@ -1,5 +1,8 @@
+import json
 import random
 import sys
+
+import pytest
 
 from conftest import ROOT
 
@@ -52,3 +55,18 @@ def test_equal_times_carry_no_information():
 def test_coarsely_rounded_times_without_signal_are_not_significant():
     bits, ms = _channel(256, lambda b, r: round(r.gauss(4000, 1), 1), 14)
     assert estimate(bits, ms, 4, perms=500, boots=100)["p"] > 0.05
+
+
+def test_analysis_refuses_traces_that_do_not_line_up(tmp_path):
+    # Found by review: unequal lengths used to be cut silently to the shorter one.
+    from jitter_test import load_ms
+    row = lambda i, a=None: json.dumps({"id": i, "elapsed_ms": 1.0, "answer": {"id": i if a is None else a}})
+    good = tmp_path / "good.jsonl"
+    good.write_text("\n".join(row(i) for i in range(4)) + "\n")
+    assert load_ms(str(good), "0110") == [1.0] * 4
+    for text, bits in ((good.read_text(), "011"), (good.read_text(), "01x0"),
+                       ("\n".join(row(i) for i in (0, 2, 1, 3)), "0110"), ("\n".join(row(i, 0) for i in range(4)), "0110")):
+        bad = tmp_path / "bad.jsonl"
+        bad.write_text(text)
+        with pytest.raises(SystemExit):
+            load_ms(str(bad), bits)
