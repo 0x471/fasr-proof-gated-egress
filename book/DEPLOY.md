@@ -34,19 +34,23 @@ Following Cloudflare's instructions ("Enable Access on your *.pages.dev domain")
 
 Then test: open `https://<project>.pages.dev` in a private window. You should get Cloudflare's sign-in page, not "Nothing here." Try an email that isn't on the list: it must not get in.
 
+**Audit before uploading the book, not just before sharing the link.** An address nobody has been sent is still public if it isn't locked. In Zero Trust > Access controls > Applications:
+
+1. There are two applications, one for `<project>.pages.dev` and one for `*.<project>.pages.dev` (previews and per-upload addresses). Old upload addresses stay reachable after newer uploads, so the wildcard one must stay.
+2. Each has exactly one Allow policy listing only the readers' emails, login by one-time PIN, and no Bypass or path exceptions.
+3. No other application covers a path or subdomain of these addresses: a more specific application overrides the general one without inheriting its policy.
+4. Every custom domain of the project has its own application, checked the same way.
+5. In a private window: a signed-out visitor gets the sign-in page; an email that isn't listed gets no code; a listed email gets in.
+
 ## 4. Deploy the book
 
 ```sh
 CF_ACCESS_TEAM=<your team name> book/deploy-cloudflare.sh book
 ```
 
-The script refuses to upload the book unless the production address is one Cloudflare reports for the project and redirects a signed-out visitor to **your team's** Access login for that address. After uploading it checks the production address and the upload's own address (`<hash>.<project>.pages.dev`) again, and tells you to delete the deployment if either is open. Run it again whenever the book changes.
+Before uploading anything, the script finds the project whose name matches exactly, refuses unless the production address is one of that project's domains, and checks that every domain of the project, plus a preview address no deployment uses, redirects a signed-out visitor to **your team's** Access login. After uploading it checks the production address and the upload's own address (`<hash>.<project>.pages.dev`) again, and tells you to delete the deployment if either is open. Run it again whenever the book changes.
 
-**This is a smoke test, not an audit.** It sees one URL from outside; it can't read the Access policies. Before sending the link, check by hand in Zero Trust > Access controls > Applications:
-
-1. There are two applications, one for `<project>.pages.dev` and one for `*.<project>.pages.dev` (previews and per-upload addresses). Old upload addresses stay reachable after newer uploads, so the wildcard one must stay.
-2. Each has exactly one Allow policy listing only the readers' emails, login by one-time PIN, and no Bypass or path exceptions.
-3. In a private window: a signed-out visitor gets the sign-in page; an email that isn't listed gets no code; a listed email gets in.
+**This is a smoke test, not an audit.** It sees URLs from outside; it can't read the Access policies, so the manual audit in step 3 comes first.
 
 If the script refuses although the private window shows the sign-in page, Cloudflare's login address may look different from what it expects: run `curl -sI https://<project>.pages.dev/` and check the `location` header before changing anything.
 
