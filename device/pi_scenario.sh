@@ -28,8 +28,9 @@ cleanup() {
 cleanup
 trap cleanup EXIT
 # The gate on the Pi must run the same code as this checkout, or the manifest's commit is wrong.
-here="$(cd pge && shasum -a 256 *.py | shasum -a 256 | cut -c1-16)"
-there="$(ssh -n p01 'cd ~/p01-v1/pge && sha256sum *.py | sha256sum | cut -c1-16')"
+# Sort by file name in byte order: the two machines' locales order "__init__.py" differently.
+here="$(cd pge && shasum -a 256 *.py | LC_ALL=C sort -k2 | shasum -a 256 | cut -c1-16)"
+there="$(ssh -n p01 'cd ~/p01-v1/pge && sha256sum *.py | LC_ALL=C sort -k2 | sha256sum | cut -c1-16')"
 [[ "$here" == "$there" ]] || { echo "$NAME: the Pi's pge differs from this checkout; redeploy: git archive HEAD | ssh p01 'cd ~/p01-v1 && tar -x'"; exit 1; }
 ssh -n p01 "ss -ltn | grep -q ':8700 '" && { echo "$NAME: port 8700 still busy"; exit 1; }
 .venv/bin/python prover/server.py --listen 192.168.2.1:8701 "$@" 2>"$OUT/$NAME.server.log" &
