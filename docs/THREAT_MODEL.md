@@ -1,6 +1,6 @@
 # Threat model
 
-Living document: started in W2, updated after each version and each adversarial-testing session, final in W7. Status as of 19 Oct 2026: v0 measured on the Pi, the v1 software (including fixed release) measured on the Pi on the v0 OS; the v1 and v2 images are not built yet.
+Living document: started in W2, updated after each version and each adversarial-testing session, final in W7. Status as of 20 Oct 2026: v0 measured on the Pi, the v1 software (including fixed release) measured on the Pi on the v0 OS; a v1 development image boots but doesn't run the gate yet; v2 is not built.
 
 ## 1. What the device protects
 
@@ -49,7 +49,7 @@ outside clients (A3)  |  device  |  AI server (A1, A2)
 
 ### 4.1 Extraction through correct answers: out of scope, to confirm
 
-A proof shows that `y` came from the pinned model on this `x`. It does nothing against an attacker who learns the model from many correct answers. For the tiny affine + ReLU test model, a handful of chosen requests that keep the ReLUs active can recover the quantised weights by linear algebra, and every proof verifies. The plan puts this out of scope; it is on the agenda for the mentor call (20 Oct) to confirm, or to add a gate policy such as query-rate limits.
+A proof shows that `y` came from the pinned model on this `x`. It does nothing against an attacker who learns the model from many correct answers. For the tiny affine + ReLU test model, a handful of chosen requests that keep the ReLUs active can recover the quantised weights by linear algebra, and every proof verifies. The plan puts this out of scope; it is on the agenda for the mentor call (21 Oct) to confirm, or to add a gate policy such as query-rate limits.
 
 For real LLMs, any freedom the proof doesn't pin (sampling seed, temperature, unproven layers) becomes a channel with valid proofs. The test model is deterministic; who chooses the seed is an open question for the mentor.
 
@@ -64,13 +64,13 @@ For real LLMs, any freedom the proof doesn't pin (sampling seed, temperature, un
 
 ## 6. Side channels a compromised server controls
 
-Status as of 19 Oct in the last column. "Open" means the channel is not closed by any software version yet.
+Status as of 20 Oct in the last column. "Open" means the channel is not closed by any software version yet.
 
 | Channel | How A1/A2 uses it | Planned defence (version) | v0 |
 |---|---|---|---|
-| Timing | Delay each answer by a chosen amount | Fixed release time with a verification budget (`--release fixed`, 19 Oct) | **Reduced, not closed (K8):** v0 and arrival order leak 16/16 bits on the Pi; under fixed release the 1 s-code decoder fails, but a 0.66 ms shift follows the server's delays (a held-out decoder gets 25-28 % wrong, n = 128); waking early and busy-waiting (`--spin-ms 5`) removes the mean shift; a 512-answer pre-registered repeat was inconclusive (held-out decoder 44 % wrong at best, p = 0.041), so what this decoder finds is small, but the residue isn't shown to be gone. Costs every answer the full budget (4 s here) |
+| Timing | Delay each answer by a chosen amount | Fixed release time with a verification budget (`--release fixed`, 19 Oct) | **Reduced, not closed (K8):** v0 and arrival order leak 16/16 bits on the Pi; under fixed release the 1 s-code decoder fails, but a sub-millisecond shift follows the server's delays without spin; with a 5 ms spin no mean shift was detected and a 512-answer pre-registered test was inconclusive, so what that decoder finds is small but the residue isn't shown to be gone. Costs every answer the full budget (4 s here). Numbers: the book's Measurements page |
 | Ordering | Answer concurrent requests in a chosen order | Release in arrival order (v1); time slots (v2) | Closed in the v1 software for the order admitted answers are written on the gate, failures included (`SERVICE_SPEC.md` section 4). Not covered: `busy` and halted answers leave at once, log timing, and the order separate TCP connections are seen in. v0 released answers as checks finished |
-| Whether an answer arrives | Fail on purpose: bad proofs, drops, resets, missed deadlines | One generic error; failure threshold and response (v1, v2). With timing fixed, still up to 1 bit per request, and a sparse failure's position carries log2 N bits per block of N | **Open, shown on the Pi (K32):** 4 failures in 64 answers carried 16 bits under every release policy. One server-independent error string; failures are counted, and `halt_after` stops all releases (pending and held ones included), off by default |
+| Whether an answer arrives | Fail on purpose: bad proofs, drops, resets, missed deadlines | One generic error; failure threshold and response (v1, v2). With timing fixed, still up to 1 bit per request, and a sparse failure's position carries log2 N bits per block of N | **Open, shown on the Pi (K32):** 4 failures in 64 answers carried 16 bits under every release policy. One server-independent error string; failures are counted, and `halt_after` stops every successful answer (pending and held ones become `unavailable`, later requests get `unavailable`), off by default; error replies keep flowing, so their timing still carries information |
 | Sizes and packet metadata | Response length, TCP segmentation, header fields | The device builds every outgoing packet itself; fixed-size responses (v1, v2) | Partly: in the v1 software every reply frame has one size and the server can't choose the number of output values; the OS's TCP stack (segmentation, headers) is still stock |
 | Answer content | Pick among valid answers or encodings | One pinned model, the device's own encoding, canonical values, `y` decoded from verified values, proof never released | **Closed for the test bundle:** binding and service tests |
 | Verification time | Proofs that are slow to verify or crash the verifier | Fixed proof size; verification budget; separate worker with a deadline | Partly: CLI killed at the deadline (`pge/cli.py`). With arrival or immediate release the answer time still depends on it; with fixed release it doesn't, except for the residual shift (K8), and a check that runs out of budget is `unavailable` |
