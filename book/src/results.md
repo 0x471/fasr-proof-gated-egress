@@ -125,6 +125,19 @@ The bias correction can make the estimate negative; that is estimator noise, not
 
 With 2 or 8 bins the no-spin result holds (p = 0.0005) and the old spin result doesn't reach significance (p = 0.46 and 0.09). Caveats on the 128-answer runs: the observer recorded times rounded to 0.1 ms (only 19-30 distinct values per 128 answers), and the spin runs used an earlier version of the spin code that a review later found could let a later answer overtake an earlier one when several were in flight. The 512-answer repeat fixes both; at 4 bins and n = 512 it is not significant either (p = 0.069).
 
+### Several connections (smoke runs, 20 Oct)
+
+Short checks of the new run script and the several-clients observer (`CLIENTS=3`, 4 s budget, one run each, not a registered experiment):
+
+| Run | Result |
+|---|---|
+| One client, fixed release, 5 ms spin, 3 answers | 3/3 ok; received 1.39-2.22 ms after the 1 s release time; the manifest records the commit and the Pi's file hashes |
+| 3 connections, arrival release, honest server, 2 rounds | 6/6 ok, replies in client order every round |
+| 3 connections, server answers each round in a chosen order (8 bits), immediate release | 8/8 bits read back from the order replies arrived across connections |
+| The same, arrival release | decoded bits constant (`00000000`): the order across connections didn't follow the server |
+
+So the order a server chooses does reach an outside observer across separate connections when answers leave as they are checked, and arrival-order release stopped this code in this run. It is 8 bits in one run per rule, on one machine running all three clients; the planned two-client deadline-pressure experiment is the real test.
+
 ## What these results don't show
 
 - One device, one network, one sequential client (ordering used concurrent requests on one connection). Several clients, other loads and packet-level observation (sizes, TCP behaviour) are not measured yet.
