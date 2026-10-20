@@ -44,7 +44,9 @@ for i in $(seq 40); do
 done
 [ $ok = 1 ] || { echo "$NAME: gate not up"; ssh -n p01 "cat ~/gate_$NAME.err" | tail -3; cleanup; exit 1; }
 if [ "$BATCH" -gt 1 ]; then B="--batch $BATCH"; else B=""; fi
-timeout 600 /usr/bin/python3 observer/client.py 192.168.2.2 8700 "$X" --n "$N" $B > "$OUT/$NAME.trace.jsonl" 2>"$OUT/$NAME.client.err"
+# Each answer can take up to the deadline plus a check, so the client's limit grows with N.
+limit=$(awk -v n="$N" -v d="$DEADLINE" 'BEGIN { printf "%d", n * (d + 3) + 120 }')
+timeout "$limit" /usr/bin/python3 observer/client.py 192.168.2.2 8700 "$X" --n "$N" $B > "$OUT/$NAME.trace.jsonl" 2>"$OUT/$NAME.client.err"
 rc=$?
 rows=$(wc -l < "$OUT/$NAME.trace.jsonl" | tr -d ' ')
 sleep 0.5
