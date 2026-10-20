@@ -27,6 +27,10 @@ cleanup() {
 }
 cleanup
 trap cleanup EXIT
+# The gate on the Pi must run the same code as this checkout, or the manifest's commit is wrong.
+here="$(cd pge && shasum -a 256 *.py | shasum -a 256 | cut -c1-16)"
+there="$(ssh -n p01 'cd ~/p01-v1/pge && sha256sum *.py | sha256sum | cut -c1-16')"
+[[ "$here" == "$there" ]] || { echo "$NAME: the Pi's pge differs from this checkout; redeploy: git archive HEAD | ssh p01 'cd ~/p01-v1 && tar -x'"; exit 1; }
 ssh -n p01 "ss -ltn | grep -q ':8700 '" && { echo "$NAME: port 8700 still busy"; exit 1; }
 .venv/bin/python prover/server.py --listen 192.168.2.1:8701 "$@" 2>"$OUT/$NAME.server.log" &
 for i in $(seq 120); do grep -q listening "$OUT/$NAME.server.log" && break; sleep 0.5; done
@@ -47,7 +51,7 @@ ssh -n p01 "cat ~/gate_$NAME.log" > "$OUT/$NAME.gate.jsonl"
 ssh -n p01 "cat ~/gate_$NAME.err" > "$OUT/$NAME.gate.err"
 status=ok
 [[ $rc == 0 && $rows == "$N" ]] || status=failed
-printf '{"name": "%s", "release": "%s", "n": %s, "batch": %s, "deadline": %s, "spin_ms": %s, "commit": "%s", "started": "%s", "client_exit": %s, "rows": %s, "status": "%s", "server_args": "%s"}\n' \
-  "$NAME" "$RELEASE" "$N" "$BATCH" "$DEADLINE" "$SPIN_MS" "$(git rev-parse --short HEAD)" "$STARTED" "$rc" "$rows" "$status" "$*" > "$OUT/$NAME.manifest.json"
+printf '{"name": "%s", "release": "%s", "n": %s, "batch": %s, "deadline": %s, "spin_ms": %s, "commit": "%s", "pge_sha256": "%s", "started": "%s", "client_exit": %s, "rows": %s, "status": "%s", "server_args": "%s"}\n' \
+  "$NAME" "$RELEASE" "$N" "$BATCH" "$DEADLINE" "$SPIN_MS" "$(git rev-parse --short HEAD)" "$here" "$STARTED" "$rc" "$rows" "$status" "$*" > "$OUT/$NAME.manifest.json"
 echo "$NAME: client exit $rc rows $rows/$N $status"
 [[ $status == ok ]]
