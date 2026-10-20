@@ -95,3 +95,10 @@ def test_documented_fuzz_count_matches_the_fuzz_test():
     from test_protocol import _candidates
     n = sum(1 for _ in _candidates(random.Random(0)))
     assert set(_ints(r"([\d,]+) random and mutated messages", PLAIN + REFERENCE)) == {n}
+
+
+def test_tests_named_as_evidence_exist():
+    defined = {n for f in (ROOT / "tests").glob("*.py") for n in re.findall(r"^def (test_\w+)", f.read_text(), re.M)}
+    pages = PLAIN + REFERENCE + [RESULTS] + [str(p.relative_to(ROOT)) for p in (ROOT / "book/src").glob("*.md")]
+    named = {(p, n) for p in set(pages) for n in re.findall(r"`(test_\w+)(?:\[[^\]]*\])?`", text(p))}
+    assert not [x for x in named if x[1] not in defined]
