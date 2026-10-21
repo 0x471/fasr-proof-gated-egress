@@ -9,8 +9,8 @@ on Linux, CPU seconds up to the deadline, no file writes, few open files. The ve
 anchored on the exit code and the CLI's log lines, as in device/check_verifier.sh.
 
 Limits: the bundle check runs before the deadline starts, and processes the CLI leaves
-behind after a normal exit are not killed. CLI_MEMORY fits the test bundles (on the Pi, 112, 144
-and 160 MiB failed on some runs; 256 MiB passed 231 of 231); a larger circuit needs a larger value.
+behind after a normal exit are not killed. CLI_MEMORY fits the test bundles (measured in
+book/src/results.md, memory limit); a larger circuit needs a larger value.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from pge.proc import NO_START, TIMEOUT, TOO_LONG, Limits, memory_limit_supported
 from pge.verdict import MAX_PROOF_BYTES, Verdict, canonical_proof, read_proof
 
 MAX_OUTPUT_BYTES = 1 << 16
-# The tiny bundle failed on some runs at 112, 144 and 160 MiB (Pi, 19 Oct); 256 MiB leaves a margin.
+# Near the limit the tiny bundle fails on some runs (book/src/results.md); 256 MiB leaves a margin.
 CLI_MEMORY = 256 << 20
 CLI_OPEN_FILES = 64
 # Verify writes no files; a CLI that tries to is stopped.
