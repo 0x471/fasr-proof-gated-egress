@@ -57,9 +57,9 @@ If the script refuses although the private window shows the sign-in page, Cloudf
 
 `.github/workflows/book.yml` runs the same script (`deploy` job) on pushes to `main` that touch the book, so the same checks apply: nothing is uploaded unless every address of the project already redirects to the Access login. One-time setup:
 
-1. Cloudflare dashboard > **My Profile** > **API Tokens** > **Create Token** > **Create Custom Token**: one permission, **Account** > **Cloudflare Pages** > **Edit**, for your account only. Copy the token once.
+1. Cloudflare dashboard > **Manage account** > **Account API tokens** > **Create Token** > **Start from scratch**: one permission, **Developer Platform** > **Pages** > **Edit** (not the two "Custom Pages" entries), for this account only, with an expiry (ours: 90 days, until 19 Jan 2027). An account token belongs to the account, not to one person's login. Copy the token once; it isn't shown again (a lost one is replaced with **Roll**).
 2. GitHub: the repository's **Settings** > **Environments** > `cloudflare` (only `main` may deploy to it) holds two secrets: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. Set the token from your own terminal: `gh secret set CLOUDFLARE_API_TOKEN --env cloudflare` (it prompts for the value, so the token never appears in a command line).
-3. Turn the job on: `gh variable set CLOUDFLARE_DEPLOY --body true`. Until then the job is skipped.
+3. Turn the job on: `gh variable set CLOUDFLARE_DEPLOY --body true` (or the repository's **Settings** > **Secrets and variables** > **Actions** > **Variables**). Until then the job is skipped; set it to anything else to pause deploys.
 
 **Limits:** anyone with write access to the repository can change the workflow and so use the token; the token can edit every Pages project in the account (Cloudflare can't scope it to one project). Protect `main` or keep collaborators read-only if that matters. Rotate the token by creating a new one and replacing the secret.
 
