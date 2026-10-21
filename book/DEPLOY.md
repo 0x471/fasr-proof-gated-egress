@@ -53,6 +53,16 @@ Before uploading anything, the script finds the project whose name matches exact
 
 If the script refuses although the private window shows the sign-in page, Cloudflare's login address may look different from what it expects: run `curl -sI https://<project>.pages.dev/` and check the `location` header before changing anything.
 
+## 5. Deploy from CI on every push to main
+
+`.github/workflows/book.yml` runs the same script (`deploy` job) on pushes to `main` that touch the book, so the same checks apply: nothing is uploaded unless every address of the project already redirects to the Access login. One-time setup:
+
+1. Cloudflare dashboard > **My Profile** > **API Tokens** > **Create Token** > **Create Custom Token**: one permission, **Account** > **Cloudflare Pages** > **Edit**, for your account only. Copy the token once.
+2. GitHub: the repository's **Settings** > **Environments** > `cloudflare` (only `main` may deploy to it) holds two secrets: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. Set the token from your own terminal: `gh secret set CLOUDFLARE_API_TOKEN --env cloudflare` (it prompts for the value, so the token never appears in a command line).
+3. Turn the job on: `gh variable set CLOUDFLARE_DEPLOY --body true`. Until then the job is skipped.
+
+**Limits:** anyone with write access to the repository can change the workflow and so use the token; the token can edit every Pages project in the account (Cloudflare can't scope it to one project). Protect `main` or keep collaborators read-only if that matters. Rotate the token by creating a new one and replacing the secret.
+
 ## Notes
 
 - **Adding a reader:** add their email to both Access policies. **Removing** one doesn't end a session already open: they keep access until it expires (the session duration set on the Access application), so revoke their sessions in Zero Trust too if it matters.

@@ -1,11 +1,9 @@
 name: book
 on:
   push:
-    paths: ["book/**", "docs/**", ".github/workflows/book.yml"]
+    paths: ["book/**", "docs/**", "README.md", ".github/workflows/book.yml"]
   pull_request:
-    paths: ["book/**", "docs/**", ".github/workflows/book.yml"]
-  # Deploying to GitHub Pages is manual: on this plan a Pages site is public to anyone with the URL.
-  # For a private copy, use book/deploy-cloudflare.sh (see book/DEPLOY.md).
+    paths: ["book/**", "docs/**", "README.md", ".github/workflows/book.yml"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -20,19 +18,30 @@ jobs:
           echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  mdbook.tgz" | sha256sum -c
           tar -xzf mdbook.tgz
       - run: ./mdbook build book
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: book/book
+  # The private copy on Cloudflare Pages, behind Cloudflare Access (book/DEPLOY.md). The script
+  # refuses to upload unless every address of the project already redirects to the Access login.
+  # Runs only from main, and only once the repo variable CLOUDFLARE_DEPLOY is "true".
   deploy:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.CLOUDFLARE_DEPLOY == 'true'
     needs: build
     runs-on: ubuntu-24.04
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    environment: cloudflare
+    concurrency:
+      group: cloudflare-book
+      cancel-in-progress: false
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
+      - uses: actions/checkout@v7
+      - name: mdBook 0.5.4 (digest-pinned)
+        run: |
+          curl -sSfL -o mdbook.tgz https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz
+          echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  mdbook.tgz" | sha256sum -c
+          tar -xzf mdbook.tgz
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: book/deploy-cloudflare.sh book
+        env:
+          CF_ACCESS_TEAM: "0x471"
+          MDBOOK: ./mdbook
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
