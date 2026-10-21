@@ -7,7 +7,7 @@
 
 ## The layers
 
-**1. Check only what the gate computed itself.** The gate never trusts the server's account of the question or the model. It encodes the question itself, pins the approved model's files by hash, fixes the proof length, and reads the output only from the proven values. See [How the gate works](how-it-works.md#why-the-gate-encodes-the-question-itself).
+**1. Check only what the gate computed itself.** The gate never trusts the server's account of the question or the model. It encodes the question itself, pins the approved model's files by hash, fixes the proof length, and reads the output only from the proven values. See [How the gate works](tour.md#how-a-proof-is-tied-to-the-question).
 
 **2. Accept one exact message format.** Questions, forwarded questions and replies have one fixed size and layout for the model in use. The server's answer is a fixed part plus the proof, which may be up to 64 KiB on the wire and must then be exactly the pinned length. Anything else is rejected: oversized or truncated messages, wrong types, numbers that aren't finite. A fuzz test throws 10,500 random and mutated messages at each parser.
 

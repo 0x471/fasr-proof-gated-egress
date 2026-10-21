@@ -48,7 +48,7 @@ Measured on a real Raspberry Pi 4 with one client at a time and one tiny test mo
 The write-up is a short book in `book/`. Its pages, readable here on GitHub:
 
 - [Overview](book/src/introduction.md)
-- [How the gate works](book/src/how-it-works.md)
+- [How the gate works](book/src/tour.md) (the whole system on one page, with diagrams)
 - [What a hacked server can still leak](book/src/leakage.md)
 - [How hard the gate is to attack](book/src/hardening.md)
 - [Measurements](book/src/results.md)

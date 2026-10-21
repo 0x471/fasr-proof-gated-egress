@@ -28,7 +28,7 @@ What this means:
 
 - **Order is easy to protect.** Sending answers back in the order the questions arrived removes the server's choice: the observer decoded the same bits whatever the server planted.
 - **Timing costs speed to protect.** The gate aims to send every answer 4 seconds after its question, so a delay chosen by the server no longer shows in a simple way. But every user now waits 4 seconds, even when the answer was ready in under one.
-- **A small timing trace was left.** With the fixed time, answers still left about 0.66 ms earlier or later depending on what the server did, enough for a decoder to get about three bits in four right. With the gate waking a few milliseconds early and waiting precisely, no average difference was detected. A 512-answer repeat with a protocol fixed in advance was inconclusive: the best decoder got about 56 % right (p = 0.041, short of the 0.01 the protocol required to call it a leak). So what this decoder finds is small, but the trace isn't shown to be gone, and a cleverer decoder might find more.
+- **A small timing trace was left.** With the fixed time, answers still left about 0.66 ms earlier or later depending on what the server did, enough for a decoder to get about three bits in four right. {{#include results.md:spin-verdict}}
 - **Failures stay open.** The server can always make an answer fail by sending a bad proof, and which answers fail is itself the message: choosing one failure in every 16 answers sent 4 bits per 16 answers. Here only 4 of 64 answers failed, yet all 16 bits got through.
 
 ## Closing the failure channel

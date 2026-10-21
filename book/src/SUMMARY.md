@@ -4,8 +4,7 @@
 
 # Understand
 
-- [The system on one page](tour.md)
-- [How the gate works](how-it-works.md)
+- [How the gate works](tour.md)
 - [What a hacked server can still leak](leakage.md)
 - [How hard the gate is to attack](hardening.md)
 - [Limitations and open questions](limitations.md)

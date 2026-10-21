@@ -16,7 +16,7 @@ from pge.protocol import PROOF_MAX, Wire
 from pge.service import Policy
 
 PLAIN = ["README.md"] + [f"book/src/{p}.md" for p in
-                         ("introduction", "how-it-works", "leakage", "hardening", "limitations", "glossary", "tour")]
+                         ("introduction", "leakage", "hardening", "limitations", "glossary", "tour")]
 REFERENCE = ["docs/ATTACKS.md", "docs/THREAT_MODEL.md", "docs/SERVICE_SPEC.md", "docs/BINDING_SPEC.md"]
 RESULTS = "book/src/results.md"
 
@@ -102,3 +102,9 @@ def test_tests_named_as_evidence_exist():
     pages = PLAIN + REFERENCE + [RESULTS] + [str(p.relative_to(ROOT)) for p in (ROOT / "book/src").glob("*.md")]
     named = {(p, n) for p in set(pages) for n in re.findall(r"`(test_\w+)(?:\[[^\]]*\])?`", text(p))}
     assert not [x for x in named if x[1] not in defined]
+
+
+def test_the_spin_verdict_is_included_not_copied():
+    # The verdict lives in results.md (anchor spin-verdict); book pages include it.
+    for path in PLAIN:
+        assert "0.041" not in text(path), f"{path}: use {{{{#include results.md:spin-verdict}}}}"

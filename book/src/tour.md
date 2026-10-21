@@ -1,9 +1,9 @@
-# The system on one page
+# How the gate works
 
 > **In short**
-> - One page that walks through every part of the gate, with a diagram for each, the code that implements it and the evidence behind it.
-> - Read it after the [Overview](introduction.md). The other pages go deeper; this one connects them.
-> - Numbers are as of 20 October 2026. Where a number appears here and in [Measurements](results.md), that page is the reference.
+> - The gate checks each answer's proof against the question **it** received, never against what the server says the question was.
+> - It sends back either the proven answer or a fixed error, never anything the server wrote, and it decides itself when and in what order answers leave.
+> - This page is the whole system on one page: every part with a diagram, the code that implements it and the evidence behind it. Every number here comes from [Measurements](results.md), which is the reference.
 
 ## The pieces
 
@@ -70,7 +70,7 @@ A valid EZKL proof only says "this circuit turned these public input values into
 
 - It binds the **encoded** value, not the raw number: 0.5 and 0.50001 both encode to 4096, so one proof serves both.
 - **Replay:** the proof has no nonce. The gate answers each pending question once and drops duplicates, so nothing is delivered twice, but an old proof for the same encoded question still verifies for a new request. For one deterministic model that gives the server no choice of output; it isn't proof of fresh computation.
-- The rules are specific to EZKL 23.0.5 and these test models; another proof system needs its own.
+- The rules are specific to [EZKL](https://github.com/zkonduit/ezkl) 23.0.5 and these test models. The test model is tiny (4 inputs, 3 outputs) and deterministic because the research question is about the gate, not the prover. A production proof system would take the same place in the design, but it needs its own binding rules (what exactly the proof states, how inputs and outputs are encoded, any randomness) and its own review.
 
 Full rules and test vectors: [Request binding specification](binding-spec.md).
 
@@ -217,6 +217,6 @@ We made the server hide a known message in its behaviour and had an outside obse
 | Fail on purpose | read back 16/16 | read back 16/16 | read back 16/16 |
 | Time per answer | 0.81 s | 0.83 s | 4.0 s |
 
-**The leftover timing trace.** Under fixed release (128 answers), answers for 1 bits left 0.66 ms earlier than answers for 0 bits (p < 0.0001; the honest control showed nothing), and a held-out decoder got about 3 bits in 4 right. With a 5 ms spin no mean shift was detected. The spin was then re-tested on 20 October under a protocol written before the data (`docs/EXPERIMENT_PROTOCOL.md`): 512 answers, the corrected spin code, microsecond timestamps. The result was **inconclusive**: the held-out decoder got about 56 % right on its better half (p = 0.041, where the protocol needed p < 0.01 to call it a leak and p > 0.05 to call it not detected), and the honest control showed nothing (p = 0.77). What this decoder finds is small, but the trace isn't shown to be gone.
+**The leftover timing trace.** Under fixed release (128 answers), answers for 1 bits left 0.66 ms earlier than answers for 0 bits (p < 0.0001; the honest control showed nothing), and a held-out decoder got about 3 bits in 4 right. The spin was re-tested on 20 October under a protocol written before the data (`docs/EXPERIMENT_PROTOCOL.md`; 512 answers, the corrected spin code, microsecond timestamps). {{#include results.md:spin-verdict}}
 
 **What it doesn't show:** a limit on what a cleverer attacker could do, several clients at once, or packet-level signals. All numbers and caveats: [Measurements](results.md) and [What a hacked server can still leak](leakage.md).
