@@ -12,7 +12,7 @@
 
 **EZKL.** The open-source tool used here to prove the outputs of a small machine-learning model and to check those proofs.
 
-**Fixed-time release.** A release rule: answers leave in arrival order, each never earlier than a set time after its question, whatever the server did. It promises "never early", not a latest time: on the Pi, one client at a time, answers arrived within 4 ms of it. It hides most of the server's timing at the cost of speed; a small trace was measured without spin.
+**Fixed-time release.** A release rule: answers leave in arrival order, each never earlier than a set time after its question, whatever the server did. It promises "never early", not a latest time; how late answers actually left is in Measurements. It hides most of the server's timing at the cost of speed; a small trace was measured without spin.
 
 **Gate.** The Raspberry Pi running the checking software, between the AI server and the outside world.
 

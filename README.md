@@ -22,14 +22,14 @@ A valid proof stops the server from changing **what** an answer says. It doesn't
 
 ## What we found
 
-<!-- ANCHOR: findings -->
+<!-- BEGIN findings: copied from book/src/results.md; tests/test_docs.py fails if they differ -->
 | Way to smuggle data out | Basic gate | Best gate so far | What it costs |
 |---|---|---|---|
 | Change what an answer says | Blocked by the proof | Blocked | Each check takes about 0.24 s on the Pi |
 | Reorder answers | Leaks | **The ordering code we tried no longer gets through**: answers leave in the order questions arrived | A slow answer delays the ones behind it |
-| Delay answers | Leaks | **Much reduced**: each answer has a set release time and can't leave before it; a small trace remained without spin, and with spin a 512-answer test was inconclusive | Answers take 4 s instead of 0.8 s |
+| Delay answers | Leaks | **Much reduced**: each answer has a set release time and can't leave before it; a small trace remained without spin, and with spin a 512-answer test was inconclusive | Answers take 4.0 s instead of about 0.8 s |
 | Fail chosen answers on purpose | Leaks | **Still leaks** | Open problem |
-<!-- ANCHOR_END: findings -->
+<!-- END findings -->
 
 Measured on a real Raspberry Pi 4 with one client at a time and one tiny test model; the rates are for the encoders we tried, not limits on what an attacker could do. Every scenario we catalogued, with its evidence, is in the [attack catalogue](docs/ATTACKS.md).
 

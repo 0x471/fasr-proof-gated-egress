@@ -93,9 +93,12 @@ The cryptography is done by EZKL's official command-line tool (23.0.5 for 64-bit
 
 - **Why a launcher and not `preexec_fn`:** the gate is multithreaded, and running Python code between fork and exec in a threaded program can deadlock. A fresh single-threaded interpreter sets the limits and then replaces itself with the CLI.
 - **Verdicts** (`classify_cli`): ACCEPT needs exit 0, no error line and exactly one "verified: true"; REJECT needs exit 1, one "verified: false" and exactly one `[halo2]` error; everything else is ERROR. Only ACCEPT releases an answer, and ERROR counts as a server failure, never as a pass.
-- **Memory:** near the limit the outcome is random because of address-space randomisation (128 MiB passed 20 of 20, 144 and 160 MiB about half the time), so the limit is 256 MiB, which passed 231 of 231.
-- **Cost** on the Pi: 239 ms for a full gate check, against 97-98 ms for the raw CLI; the breakdown is in [Measurements](results.md).
+- **Memory:** {{#include results.md:memory}}
 - **What it isn't:** a sandbox. Limits are per process; a separate user and a read-only system come with the v1 image.
+
+**What a check costs on the Pi** (medians of 20, 19 October):
+
+{{#include results.md:verify-cost}}
 
 ## The message format
 
@@ -146,13 +149,16 @@ The same gate is built three times, each version removing a way in, and measured
 
 |  | v0 (measured) | v1 (in progress) | v2 (planned) |
 |---|---|---|---|
-| Operating system | Raspberry Pi OS Lite (Debian 13), 633 packages, 13 running services | Buildroot 2025.02.18 LTS: kernel 6.6, BusyBox init, glibc 2.41, Python 3.12 | as v1, inside a signed boot image |
-| Reachable from outside | TCP 22 (ssh) and 8700 (the gate), UDP 5353 (mDNS) | 0 of 65,535 TCP ports open, top 100 UDP closed, no IPv6 (gate not on the image yet) | as v1 |
+| Operating system | Raspberry Pi OS Lite (Debian 13) | Buildroot 2025.02.18 LTS: kernel 6.6, BusyBox init, glibc 2.41, Python 3.12 | as v1, inside a signed boot image |
 | Network | one port | two wired ports, static addresses, nothing forwarded | as v1 |
 | Updates | copy files over ssh | swap the SD card | signed, versioned packages with a rollback rule |
 | Debug access | ssh, HDMI | serial console only | as v1 |
 
-- **How the v1 image is built** (`image/build.sh`, on a Linux VM because Buildroot doesn't build on macOS): download the Buildroot release and check its SHA-256, start from `raspberrypi4_64_defconfig`, add glibc (the EZKL CLI needs it) and Python 3 (`image/v1.fragment`), check every added option survived, build `sdcard.img` (159 MB). Defaults still to fix: an empty root password on the console, DHCP instead of fixed addresses, and crond.
+What each one exposes, measured:
+
+{{#include results.md:attack-surface}}
+
+- **How the v1 image is built** (`image/build.sh`, on a Linux VM because Buildroot doesn't build on macOS): download the Buildroot release and check its SHA-256, start from `raspberrypi4_64_defconfig`, add glibc (the EZKL CLI needs it) and Python 3 (`image/v1.fragment`), check every added option survived, build `sdcard.img`. Defaults still to fix: an empty root password on the console, DHCP instead of fixed addresses, and crond.
 - **What v1 still needs:** the gate and the pinned bundle inside the image, a read-only system, a separate unprivileged user for the checker, a small log partition, the second port, and a serial console for debugging.
 
 **Secure boot (v2, planned):**
@@ -210,13 +216,8 @@ We made the server hide a known message in its behaviour and had an outside obse
 
 **Results on the Pi** (19 October, 4 s budget, one client at a time, 16 bits per cell):
 
-| Signal | Immediate | Arrival | Fixed |
-|---|---|---|---|
-| Delay | read back 16/16 | read back 16/16 | not read back (12/16 wrong) |
-| Reorder | read back 16/16 | decoded bits constant | decoded bits constant |
-| Fail on purpose | read back 16/16 | read back 16/16 | read back 16/16 |
-| Time per answer | 0.81 s | 0.83 s | 4.0 s |
+{{#include results.md:matrix}}
 
-**The leftover timing trace.** Under fixed release (128 answers), answers for 1 bits left 0.66 ms earlier than answers for 0 bits (p < 0.0001; the honest control showed nothing), and a held-out decoder got about 3 bits in 4 right. The spin was re-tested on 20 October under a protocol written before the data (`docs/EXPERIMENT_PROTOCOL.md`; 512 answers, the corrected spin code, microsecond timestamps). {{#include results.md:spin-verdict}}
+**The leftover timing trace.** {{#include results.md:no-spin-trace}} The spin was re-tested on 20 October under a protocol written before the data (`docs/EXPERIMENT_PROTOCOL.md`; 512 answers, the corrected spin code, microsecond timestamps). {{#include results.md:spin-verdict}}
 
 **What it doesn't show:** a limit on what a cleverer attacker could do, several clients at once, or packet-level signals. All numbers and caveats: [Measurements](results.md) and [What a hacked server can still leak](leakage.md).

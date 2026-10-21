@@ -23,7 +23,7 @@ We call the Pi running the checking software **the gate**.
 
 ## What we found
 
-{{#include ../../README.md:findings}}
+{{#include results.md:findings}}
 
 These are results for one tiny, deterministic test model and the encoders we tried, not limits on what an attacker could do. Details and numbers are in [What a hacked server can still leak](leakage.md).
 

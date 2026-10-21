@@ -2,7 +2,7 @@
 
 > **In short**
 > - A proof fixes what an answer says, but a hacked server still controls **when** it answers, **in what order**, and **which answers fail**. Each of these can carry hidden data.
-> - On the real device, with one client at a time: releasing answers in arrival order stopped the ordering code we tried, and releasing every answer at a fixed time stopped the timing code we tried, at the cost of speed. A small timing trace remained without spin; with spin, a 512-answer test was inconclusive.
+> - On the real device, with one client at a time: releasing answers in arrival order stopped the ordering code we tried, and releasing every answer at a fixed time stopped the timing code we tried, at the cost of speed. A small leftover timing trace is described below.
 > - Deliberate failures leaked under every release rule we tried. This is the main open problem.
 
 ## Why a proof isn't enough
@@ -17,19 +17,14 @@ We did this on the real Raspberry Pi for three ways of signalling and three rele
 
 ## Results
 
-| The server signals by | Immediate release | Arrival order | Fixed time |
-|---|---|---|---|
-| Delaying answers | Read back (16 of 16 bits) | Read back (16 of 16) | Not read back (12 of 16 wrong) |
-| Reordering answers | Read back (16 of 16) | Not read back (same bits whatever was planted) | Not read back |
-| Failing chosen answers | Read back (16 of 16) | Read back (16 of 16) | Read back (16 of 16) |
-| **Time per answer** | 0.8 s | 0.8 s | **4.0 s** |
+{{#include results.md:matrix}}
 
 What this means:
 
 - **Order is easy to protect.** Sending answers back in the order the questions arrived removes the server's choice: the observer decoded the same bits whatever the server planted.
-- **Timing costs speed to protect.** The gate aims to send every answer 4 seconds after its question, so a delay chosen by the server no longer shows in a simple way. But every user now waits 4 seconds, even when the answer was ready in under one.
-- **A small timing trace was left.** With the fixed time, answers still left about 0.66 ms earlier or later depending on what the server did, enough for a decoder to get about three bits in four right. {{#include results.md:spin-verdict}}
-- **Failures stay open.** The server can always make an answer fail by sending a bad proof, and which answers fail is itself the message: choosing one failure in every 16 answers sent 4 bits per 16 answers. Here only 4 of 64 answers failed, yet all 16 bits got through.
+- **Timing costs speed to protect.** The gate aims to send every answer 4 seconds after its question, so a delay chosen by the server no longer shows in a simple way. But every user now waits the whole budget, even when the answer was ready much sooner (the last row above).
+- **A small timing trace was left.** {{#include results.md:no-spin-trace}} {{#include results.md:spin-verdict}}
+- **Failures stay open.** The server can always make an answer fail by sending a bad proof, and which answers fail is itself the message: choosing one failure in every 16 answers sends 4 bits per 16 answers. {{#include results.md:failure-leak}}
 
 ## Closing the failure channel
 
