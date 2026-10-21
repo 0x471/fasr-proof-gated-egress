@@ -38,7 +38,9 @@ locked() {
 
 case "${1:-}" in
   placeholder)
-    domains >/dev/null || $WRANGLER pages project create "$PROJECT" --production-branch main
+    # wrangler 4.147 sends "pages project create" to the newer Workers flow, which fails for a
+    # direct-upload project, so the project is created once in the dashboard (book/DEPLOY.md).
+    domains >/dev/null || { echo "no Pages project named exactly $PROJECT: create it in the dashboard first (book/DEPLOY.md)" >&2; exit 1; }
     printf '<!doctype html><title>Private</title><p>Nothing here.</p>\n' > "$OUT/index.html"
     $WRANGLER pages deploy "$OUT" --project-name "$PROJECT" --branch main
     echo "Placeholder deployed. Now lock the production hostname and the previews with Access (book/DEPLOY.md)."

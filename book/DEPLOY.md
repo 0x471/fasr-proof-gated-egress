@@ -6,7 +6,7 @@ GitHub Pages can't restrict who reads a site on a personal account: private Page
 
 ## 1. One-time setup
 
-1. Create a free Cloudflare account and open **Zero Trust** once (it asks for a team name; the free plan is enough).
+1. Create a free Cloudflare account and open **Zero Trust** once (it asks for a team name). Choose the **Zero Trust Free** plan: Cloudflare asks for a card and a billing address even for the free plan, and the account owner enters them.
 2. In this repo, log wrangler in (opens a browser): `npx --yes wrangler@4.147.0 login`.
 3. Have mdBook 0.5.4 available as `mdbook`, or set `MDBOOK=/path/to/mdbook`.
 
@@ -18,19 +18,18 @@ CF_ACCESS_TEAM=<your team name> book/deploy-cloudflare.sh placeholder
 
 `<your team name>` is the Zero Trust team name from step 1 (your login page is `<team>.cloudflareaccess.com`).
 
-This creates the Pages project `proof-gated-egress` and deploys a page that says "Nothing here." If Cloudflare gives the project a different address (for example with a suffix because the name is taken), set `CF_PAGES_HOST=<that address>` for the next steps.
+First create the project once in the dashboard: **Workers & Pages** > **Create** > **Pages** > **Drag and drop your files**, name it `proof-gated-egress`, and select **Create project** (don't upload anything there). wrangler 4.147 can't create it: `pages project create` is redirected to the newer Workers flow and fails. Then the command above deploys a page that says "Nothing here." If Cloudflare gives the project a different address (for example with a suffix because the name is taken), set `CF_PAGES_HOST=<that address>` for the next steps.
 
 ## 3. Lock both addresses with Access
 
 Following Cloudflare's instructions ("Enable Access on your *.pages.dev domain"):
 
-1. Cloudflare dashboard > **Workers & Pages** > the project > **Settings** > **Enable access policy**.
-2. Select **Manage** on the Access policy it created (for preview deployments).
-3. Under **Access** > **Applications**, select the project, then **Configure**.
-4. Under **Public hostname**, in the **Subdomain** field, delete the wildcard (`*`) and **Save**. (If it complains, change the application name.)
-5. Back in the project > **Settings** > **General**, select **Enable access policy** again, which re-protects the previews.
-6. Check there are now **two** Access applications: one for `<project>.pages.dev`, one for the previews.
-7. In each, set the policy to **Allow** only these emails: yours, Yogi's and Jakub's. Login method: **One-time PIN**.
+1. Cloudflare dashboard > **Workers & Pages** > the project > **Settings** > **Preview access** > **Restrict previews**. This creates an Access application for `*.<project>.pages.dev`.
+2. Zero Trust > **Access controls** > **Applications** > that application. Under **Public hostnames**, clear the **Subdomain** field (it holds `*`) and **Save**. The application now protects `<project>.pages.dev` and the previews are open, so do the next step straight away.
+3. Back in the project > **Settings** > **Preview access** > **Restrict previews** again: a second application now protects `*.<project>.pages.dev`.
+4. Zero Trust > **Access controls** > **Policies** > **Add a policy**: Include > **Emails** > the readers' addresses, Action **Allow**, a name such as "Book readers".
+5. In each of the two applications: add that policy, remove the default "Allow Members" policy (its sources are all authenticated users), **Save**.
+6. Zero Trust > **Integrations** > **Identity providers** must list a **One-time PIN** provider (it is the default when none is added).
 
 Then test: open `https://<project>.pages.dev` in a private window. You should get Cloudflare's sign-in page, not "Nothing here." Try an email that isn't on the list: it must not get in.
 

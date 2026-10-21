@@ -1,5 +1,6 @@
 # Environments and caches
 .venv/
+.wrangler/
 __pycache__/
 .pytest_cache/
 
