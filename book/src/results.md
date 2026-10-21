@@ -7,6 +7,17 @@
 
 Everything here was measured on one Raspberry Pi 4 (2 GB, Raspberry Pi OS Lite, 64-bit) with the AI server (Python EZKL prover) and the observer on a laptop (Apple M4 Pro) over a direct Ethernet link, unless stated otherwise. Dates are 2026.
 
+## Summary
+
+<!-- ANCHOR: findings -->
+| Way to smuggle data out | Basic gate | Best gate so far | What it costs |
+|---|---|---|---|
+| Change what an answer says | Blocked by the proof | Blocked | Each check takes about 0.24 s on the Pi |
+| Reorder answers | Leaks | **The ordering code we tried no longer gets through**: answers leave in the order questions arrived | A slow answer delays the ones behind it |
+| Delay answers | Leaks | **Much reduced**: each answer has a set release time and can't leave before it; a small trace remained without spin, and with spin a 512-answer test was inconclusive | Answers take 4.0 s instead of about 0.8 s |
+| Fail chosen answers on purpose | Leaks | **Still leaks** | Open problem |
+<!-- ANCHOR_END: findings -->
+
 **How to read the leakage numbers.** The server hides known bits and an observer tries to read them back with a fixed decoder. "16/16" means every planted bit was recovered. When the decoder fails, the table says how many bits it got wrong; that means this decoder did not recover that message in that run, not that the encoding carries no information or that nothing leaks. These are achieved rates for one encoder each, from one sequential client unless stated; they are not capacity bounds.
 
 ## Checking one proof
@@ -21,6 +32,7 @@ Whole EZKL CLI process per check (start-up, loading, verify), tiny circuit:
 
 What the full gate path costs (19 Oct, medians of 20, `device/verify_cost.py`):
 
+<!-- ANCHOR: verify-cost -->
 | Path | ms |
 |---|---|
 | Raw CLI, default threads (4 cores) | 97-98 |
@@ -29,8 +41,13 @@ What the full gate path costs (19 Oct, medians of 20, `device/verify_cost.py`):
 | Re-checking the bundle's hashes (includes a 4 MB setup file) | 28 |
 | Reading and canonicalising the proof | 2 |
 | Full gate check | 239 |
+<!-- ANCHOR_END: verify-cost -->
 
 A raw proof for the test model is 3,072 bytes. The EZKL CLI binary (23.0.5, 64-bit ARM) is 36 MB (36,091,376 bytes); it also contains the prover and setup code. One thread costs 1.7x; the launcher's Python start-up is about 45 ms. Both could be cut (a static launcher; hashing the bundle once when it lives in a read-only image). On the laptop, proving takes about 0.5-0.8 s and an in-process verify 8-14 ms.
+
+<!-- ANCHOR: memory -->
+Near the memory limit the outcome is random (address-space randomisation): 128 MiB passed 20 of 20 runs, 144 and 160 MiB only about half; at the gate's setting of 256 MiB every recorded check passed, 231 of 231.
+<!-- ANCHOR_END: memory -->
 
 **The memory limit is not a clean floor.** Address-space limit vs. how often a valid proof is accepted, in one sweep of 20 runs per limit (19 Oct; the rest abort, which the gate treats as an error):
 
@@ -50,10 +67,12 @@ Other runs the same day at 256 MiB: one first check, then 200/200 and 10/10, so 
 
 ## Attack surface
 
+<!-- ANCHOR: attack-surface -->
 | Version | Seen from outside | Notes |
 |---|---|---|
 | v0 (stock OS, 16 Oct) | TCP 22 (ssh) and 8700 (the gate); UDP 5353 (mDNS) | 633 packages, 13 running services |
 | v1 development image (16 Oct, `sdcard.img` 159 MB) | 0 of 65,535 TCP ports open; top 100 UDP ports closed; no IPv6 | **No gate was running on this image yet**, so this shows a quiet base system, not a working hardened gate |
+<!-- ANCHOR_END: attack-surface -->
 
 ## The gate end to end
 
@@ -77,6 +96,7 @@ The first timing test (16 Oct, v0): the server delayed an answer by 1 s for each
 
 The core experiment (19 Oct): the same workload under each of the gate's three release policies, with a 4 s budget for every policy, 16 planted bits per channel, one run per cell (`device/pi_matrix.sh`, summarised by `observer/analyze_matrix.py`).
 
+<!-- ANCHOR: matrix -->
 | Channel the server uses | immediate (v0) | arrival (v1) | fixed |
 |---|---|---|---|
 | Timing: delay an answer by 1 s for a 1 | **16/16 recovered** | **16/16 recovered** | not recovered (12/16 wrong); answer times spread over 2.0 ms |
@@ -84,10 +104,15 @@ The core experiment (19 Oct): the same workload under each of the gate's three r
 | Failure position: fail one chosen answer in each 16 | **16/16 recovered** | **16/16 recovered** | **16/16 recovered** |
 | No signal (honest server, timing decoder) | 8/16 wrong | 10/16 wrong | 7/16 wrong |
 | Honest answer time, median | 0.81 s | 0.83 s | 4.0 s |
+<!-- ANCHOR_END: matrix -->
 
 - **Ordering:** with arrival or fixed release the decoded bits were the same whatever the server planted, so the server's choice of order never reached the observer. On one connection that holds by construction: the gate sends answers in admission order and the client's ids increase. A separate localhost run showed v0 leaking floor(log2 k!) bits per batch of k concurrent requests with no errors (16/16, 32/32 and 64/64 bits for k = 2, 3, 4).
 - **Timing:** the 1 s code wasn't recovered under fixed release, but a smaller timing trace remains (below). The cost is latency: every answer waits the whole budget, about 5 times the honest median in this sequential run.
-- **Failures** were recovered under every policy: 4 failures in 64 answers (6.25 %) carried 16 bits, 0.25 bit per request, with this particular encoder.
+- **Failures** were recovered under every policy (below).
+
+<!-- ANCHOR: failure-leak -->
+Only 4 of 64 answers failed (one chosen position in each block of 16), yet all 16 bits got through: 0.25 bit per request with this encoder.
+<!-- ANCHOR_END: failure-leak -->
 
 ### What fixed release leaves
 
@@ -101,6 +126,10 @@ A longer run (128 random bits, plus 128 honest requests as a control) asked whet
 | Honest server, with the spin (old spin code) | +0.09 ms | p = 0.20 |
 | Server encoding bits, spin, fixed code, n = 512 (20 Oct) | -0.06 ms | p = 0.071 |
 | Honest server, spin, fixed code, n = 512 (20 Oct) | -0.02 ms | p = 0.48 |
+
+<!-- ANCHOR: no-spin-trace -->
+Without spin, answers for 1 bits left 0.66 ms earlier than answers for 0 bits (128 answers, p < 0.0001; the honest control showed nothing), and a decoder fitted on one half and tested on the other got about three bits in four right.
+<!-- ANCHOR_END: no-spin-trace -->
 
 **Without spin**, the association is clear. A threshold decoder fitted on one half and tested on the other got 25 % and 28 % of the bits wrong (`observer/jitter_test.py --heldout`). If the channel were a symmetric binary channel with independent errors, that would correspond to about 0.14-0.19 bit per answer; it is a model-based figure, not a measured throughput, and the two error kinds were not symmetric in one half.
 
