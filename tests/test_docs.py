@@ -7,6 +7,7 @@
 import json
 import random
 import re
+import subprocess
 
 import pytest
 
@@ -45,25 +46,41 @@ def test_catalogue_counts_are_only_written_in_the_catalogue():
             assert not re.search(r"\b\d+ scenarios\b", text(path)), f"{path}: include docs/ATTACKS.md:summary instead"
 
 
-# Numbers with units, p-values and counts. Formats differ between pages ("12 of 16" here, "12/16" there).
-NUMBER = re.compile(r"(?<![\d.])\d[\d,]*(?:\.\d+)?(?:-\d[\d,]*(?:\.\d+)?)? ?(?:ms|s|%|MiB|MB|bit/s)\b"
-                    r"|p = 0\.\d+|(?<![\d.])\d+/\d+\b|\b\d+ of \d+\b")
+# Numbers with units, p-values and counts: measurements look like this.
+NUMBER = re.compile(r"(?<![\d.])\d[\d,]*(?:\.\d+)?(?:-\d[\d,]*(?:\.\d+)?)? ?(?:ms|s|%|MiB|KiB|MB|bit/s)\b"
+                    r"|p [=<] 0\.\d+|(?<![\d.])\d+/\d+\b|\b\d+ of \d+\b")
+# Settings, code constants and a pre-registered decision threshold, not measurements; the
+# constants are checked against the code below.
+ALLOWED = {"4 s", "5 ms", "1 s", "5 s", "64 KiB", "256 MiB", "1 MiB", "p < 0.01"}
+README_COPY = re.compile(r"<!-- BEGIN findings[^>]*-->\n(.*?)<!-- END findings -->\n", re.S)
 
 
-def _found(token, ref):
-    if token in ref:
-        return True
-    if m := re.fullmatch(r"(\d+) of (\d+)", token):
-        return f"{m[1]}/{m[2]}" in ref or re.search(rf"\b{m[1]} \w+ in {m[2]}\b", ref) is not None
-    bare = re.sub(r"^p = | ?(ms|s|%|MiB|MB|bit/s)$", "", token)
-    return re.search(rf"(?<![\d.]){re.escape(bare)}(?![\d.])", ref) is not None
+def _anchor(name):
+    return re.search(rf"<!-- ANCHOR: {name} -->\n(.*?)<!-- ANCHOR_END: {name} -->\n", text(RESULTS), re.S).group(1)
 
 
-@pytest.mark.parametrize("path", PLAIN + REFERENCE)
-def test_quoted_measurements_come_from_the_measurements_page(path):
-    ref = text(RESULTS)
-    missing = sorted(t for t in set(NUMBER.findall(text(path))) if not _found(t, ref))
-    assert not missing, f"{path} quotes numbers that book/src/results.md doesn't have: {missing}"
+def _documents():
+    out = subprocess.run(["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    skip = {RESULTS, "RULES.md"}
+    return [p for p in out.split() if p not in skip and not p.startswith(("docs/results/", "spike/"))]
+
+
+def test_measurements_are_written_only_in_results():
+    for path in _documents():
+        body = README_COPY.sub("", text(path))
+        found = sorted(set(NUMBER.findall(body)) - ALLOWED)
+        assert not found, f"{path} writes measurements {found}; include them from {RESULTS} or link to it"
+
+
+def test_readme_findings_are_an_exact_copy():
+    assert README_COPY.search(text("README.md")).group(1) == _anchor("findings")
+
+
+def test_allowed_constants_match_the_code():
+    from pge.service import SERVER_BUFFER_MAX
+    from pge.verdict import MAX_PROOF_BYTES
+    assert PROOF_MAX == MAX_OUTPUT_BYTES == 64 << 10 and CLI_MEMORY == 256 << 20
+    assert SERVER_BUFFER_MAX == MAX_PROOF_BYTES == 1 << 20
 
 
 def _ints(pattern, paths):
