@@ -1,0 +1,5 @@
+[package]
+name = "pge-core"
+version.workspace = true
+edition.workspace = true
+

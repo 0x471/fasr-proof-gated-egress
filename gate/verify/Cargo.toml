@@ -1,0 +1,5 @@
+[package]
+name = "pge-verify"
+version.workspace = true
+edition.workspace = true
+

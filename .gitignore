@@ -3,6 +3,11 @@
 .wrangler/
 __pycache__/
 .pytest_cache/
+.deps/
+gate/target/
+gate/fuzz/target/
+gate/fuzz/artifacts/
+gate/fuzz/corpus/
 
 # Scratch prover outputs (regenerable; large keys)
 prover/artifacts/

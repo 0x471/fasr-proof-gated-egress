@@ -1,0 +1,5 @@
+[package]
+name = "pge-wire"
+version.workspace = true
+edition.workspace = true
+
