@@ -6,7 +6,6 @@ resolver = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = "0.10"
-tempfile = "3"
 num-bigint = "0.4"
 num-traits = "0.2"
 libc = "0.2"
