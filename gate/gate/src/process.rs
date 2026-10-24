@@ -209,7 +209,10 @@ mod tests {
     }
     #[test]
     fn killed_child_cannot_accept() {
-        assert_eq!(shell("printf 'accept\\n'; kill -KILL $$", 1000), Verdict::Error);
+        assert_eq!(
+            shell("printf 'accept\\n'; kill -KILL $$", 1000),
+            Verdict::Error
+        );
     }
     #[test]
     fn deadline_kills_grandchildren_too() {
@@ -234,7 +237,9 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         if !stopped {
-            let _ = Command::new("/bin/kill").args(["-KILL", pid.trim()]).status();
+            let _ = Command::new("/bin/kill")
+                .args(["-KILL", pid.trim()])
+                .status();
         }
         assert!(stopped, "grandchild survived the process-group deadline");
     }
