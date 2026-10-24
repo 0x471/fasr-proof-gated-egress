@@ -1,5 +1,6 @@
 [workspace]
-members = ["wire", "core", "verify", "gate"]
+members = ["wire", "core", "verify", "gate", "fuzz"]
+default-members = ["wire", "core", "verify", "gate"]
 resolver = "2"
 
 [workspace.dependencies]
