@@ -59,7 +59,14 @@ fn child(args: &[String]) -> ExitCode {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<_> = std::env::args().skip(1).collect();
+    let args: std::result::Result<Vec<_>, _> = std::env::args_os()
+        .skip(1)
+        .map(|a| a.into_string())
+        .collect();
+    let Ok(args) = args else {
+        eprintln!("arguments must be UTF-8");
+        return ExitCode::from(2);
+    };
     if args.first().map(String::as_str) == Some("--verify-child") {
         return child(&args);
     }

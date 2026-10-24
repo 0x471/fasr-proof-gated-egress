@@ -384,9 +384,11 @@ pub fn run(config: Config) -> Result<(), String> {
         if gate.server.is_none() && connecting.is_none() && Instant::now() >= retry {
             let (tx, rx) = mpsc::channel();
             let addr = gate.config.server;
-            thread::Builder::new().spawn(move || {
-                let _ = tx.send(TcpStream::connect_timeout(&addr, Duration::from_secs(10)));
-            }).map_err(|_| "connect thread")?;
+            thread::Builder::new()
+                .spawn(move || {
+                    let _ = tx.send(TcpStream::connect_timeout(&addr, Duration::from_secs(10)));
+                })
+                .map_err(|_| "connect thread")?;
             connecting = Some(rx);
         }
         if let Some(rx) = &connecting {
@@ -460,8 +462,15 @@ pub fn run(config: Config) -> Result<(), String> {
                             crate::verify_job(bundle, job.data, Duration::from_nanos(left), len);
                         let _ = tx.send((job.seq, verdict));
                     });
-                    if started.is_ok() { active = true; }
-                    else { gate.core.complete(seq,gate.now(),Decision::failure("error","verifier_failed")); }
+                    if started.is_ok() {
+                        active = true;
+                    } else {
+                        gate.core.complete(
+                            seq,
+                            gate.now(),
+                            Decision::failure("error", "verifier_failed"),
+                        );
+                    }
                     break;
                 }
             }
