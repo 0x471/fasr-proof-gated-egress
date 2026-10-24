@@ -1,0 +1,21 @@
+[ezkl]
+git = "https://github.com/zkonduit/ezkl.git"
+rev = "534ff3e6c13d4c2c1aca2358910d62dac466d3cc"
+[halo2]
+git = "https://github.com/zkonduit/halo2.git"
+rev = "01c88842679b4308e43ae5ed91c4183e861669bd"
+[halo2wrong]
+git = "https://github.com/zkonduit/halo2wrong.git"
+rev = "07005dd59a76d64895f27f114141c1798aec8c9f"
+[snark-verifier]
+git = "https://github.com/zkonduit/snark-verifier.git"
+rev = "508d96b20874d575bb489cb5f92f8bb116e9d44a"
+[halo2curves]
+git = "https://github.com/privacy-scaling-explorations/halo2curves.git"
+rev = "b753a832e92d5c86c5c997327a9cf9de86a18851"
+[halo2curves-old]
+git = "https://github.com/privacy-scaling-explorations/halo2curves.git"
+rev = "9f5c50810bbefe779ee5cf1d852b2fe85dc35d5e"
+[poseidon]
+git = "https://github.com/privacy-scaling-explorations/poseidon.git"
+rev = "807f8f555313f726ca03bdf941f798098f488ba4"

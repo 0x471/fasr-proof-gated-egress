@@ -2,6 +2,34 @@
 members = ["wire", "core", "verify", "gate"]
 resolver = "2"
 
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+sha2 = "0.10"
+tempfile = "3"
+num-bigint = "0.4"
+num-traits = "0.2"
+libc = "0.2"
+
+[patch.'https://github.com/zkonduit/halo2']
+halo2_proofs = { path = "../.deps/halo2/halo2_proofs" }
+halo2_gadgets = { path = "../.deps/halo2/halo2_gadgets" }
+
+[patch.'https://github.com/zkonduit/halo2#f441c920be45f8f05d2c06a173d82e8885a5ed4d']
+halo2_proofs = { path = "../.deps/halo2/halo2_proofs" }
+
+[patch.'https://github.com/zkonduit/halo2#1dd2090741f006fd031a07da7f3c9dfce5e0015e']
+halo2_proofs = { path = "../.deps/halo2/halo2_proofs" }
+[patch.'https://github.com/zkonduit/halo2wrong']
+ecc = { path = "../.deps/halo2wrong/ecc" }
+[patch.'https://github.com/zkonduit/snark-verifier']
+snark-verifier = { path = "../.deps/snark-verifier/snark-verifier" }
+[patch.'https://github.com/privacy-scaling-explorations/halo2curves']
+halo2curves = { path = "../.deps/halo2curves" }
+halo2curves_old = { package = "halo2curves", path = "../.deps/halo2curves-old" }
+[patch.'https://github.com/privacy-scaling-explorations/poseidon']
+poseidon = { path = "../.deps/poseidon" }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
