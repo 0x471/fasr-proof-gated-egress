@@ -1,0 +1,68 @@
+name: rust gate
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            archive: ezkl-linux-gnu.tar.gz
+            sha256: 311709e04a277c3274923f881926da8bfd33bdbdab167e3d46facb2111f6bdab
+            wheel: true
+          - runner: ubuntu-24.04-arm
+            archive: ezkl-linux-aarch64.tar.gz
+            sha256: 384af10d6d6c24379789ba29559c7deacf1b4e287a89ad48e13949939d9dffa6
+            wheel: false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      PGE_REQUIRE_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: prepare pinned sources and toolchain
+        run: |
+          rustup toolchain install nightly-2025-12-01 --profile minimal
+          bash gate/prepare.sh
+          echo "CARGO_HOME=$PWD/.deps/cargo" >> "$GITHUB_ENV"
+          echo "PGE_SRS=$RUNNER_TEMP/kzg.srs" >> "$GITHUB_ENV"
+          echo "PGE_RUST_BIN=$PWD/gate/target/release/pge-gate" >> "$GITHUB_ENV"
+      - name: fetch pinned test artifacts
+        env:
+          ARCHIVE: ${{ matrix.archive }}
+          ARCHIVE_SHA256: ${{ matrix.sha256 }}
+        run: |
+          curl --fail --location --connect-timeout 10 --max-time 120 \
+            https://kzg.ezkl.xyz/kzg15.srs -o "$RUNNER_TEMP/kzg.srs"
+          echo "90807800a1c3b248a452e1732c45ee5099f38b737356f5542c0584ec9c3ebb45  $RUNNER_TEMP/kzg.srs" | sha256sum -c -
+          curl --fail --location --connect-timeout 10 --max-time 120 \
+            "https://github.com/zkonduit/ezkl/releases/download/v23.0.5/$ARCHIVE" -o "$RUNNER_TEMP/ezkl.tgz"
+          echo "$ARCHIVE_SHA256  $RUNNER_TEMP/ezkl.tgz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/cli"
+          tar -xzf "$RUNNER_TEMP/ezkl.tgz" -C "$RUNNER_TEMP/cli" ezkl
+          echo "PGE_RUST_REFERENCE_CLI=$RUNNER_TEMP/cli/ezkl" >> "$GITHUB_ENV"
+      - run: python -m pip install onnx numpy pytest
+      - if: matrix.wheel
+        run: python -m pip install "ezkl==23.0.5"
+      - name: test and build Rust
+        run: |
+          cargo +nightly-2025-12-01 test --manifest-path gate/Cargo.toml --workspace --locked
+          cargo +nightly-2025-12-01 build --manifest-path gate/Cargo.toml --release --locked
+      - name: compare both gates over TCP
+        run: python -m pytest tests/test_gate_rust.py tests/test_docs.py -q -rs
+      - name: build and check static aarch64
+        if: ${{ !matrix.wheel }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add --toolchain nightly-2025-12-01 aarch64-unknown-linux-musl
+          export CC_aarch64_unknown_linux_musl=musl-gcc
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+          cargo +nightly-2025-12-01 build --manifest-path gate/Cargo.toml --release --locked --target aarch64-unknown-linux-musl
+          PGE_RUST_BIN="$PWD/gate/target/aarch64-unknown-linux-musl/release/pge-gate" \
+            python -m pytest tests/test_gate_rust.py -q -rs
