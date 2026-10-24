@@ -1106,7 +1106,6 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "pge-wire",
- "serde",
  "serde_json",
  "sha2",
  "snark-verifier",
