@@ -208,6 +208,37 @@ mod tests {
         }
     }
     #[test]
+    fn killed_child_cannot_accept() {
+        assert_eq!(shell("printf 'accept\\n'; kill -KILL $$", 1000), Verdict::Error);
+    }
+    #[test]
+    fn deadline_kills_grandchildren_too() {
+        let path = std::env::temp_dir().join(format!("pge-grandchild-{}", std::process::id()));
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", "sleep 30 & printf '%s' $! > \"$1\"; wait", "probe"])
+            .arg(&path);
+        assert_eq!(run(cmd, Duration::from_secs(1), b""), Verdict::Error);
+        let pid = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let mut stopped = false;
+        for _ in 0..100 {
+            let status = Command::new("/bin/ps")
+                .args(["-o", "stat=", "-p", pid.trim()])
+                .output()
+                .unwrap();
+            let state = String::from_utf8_lossy(&status.stdout);
+            if state.trim().is_empty() || state.trim().starts_with('Z') {
+                stopped = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        if !stopped {
+            let _ = Command::new("/bin/kill").args(["-KILL", pid.trim()]).status();
+        }
+        assert!(stopped, "grandchild survived the process-group deadline");
+    }
+    #[test]
     fn hung_and_flooding_children_are_errors() {
         for script in [
             "printf 'accept\\n'; sleep 30",
