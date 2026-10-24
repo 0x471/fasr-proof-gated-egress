@@ -1,5 +1,6 @@
 """Black-box compatibility checks. Both gates use real verification and TCP."""
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -251,6 +252,19 @@ def test_worker_input_failures_are_fail_closed(rust_bin, tiny_bundle, tiny_proof
         expected = (1, b"reject\n")
     result = subprocess.run(child_command(rust_bin, tiny_bundle), input=raw, capture_output=True, timeout=5)
     assert (result.returncode, result.stdout) == expected
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_bad_pinned_model_is_error(rust_bin, tiny_bundle, tiny_proof, index):
+    chunks = [tiny_bundle.settings.read_bytes(), tiny_bundle.vk.read_bytes(), tiny_bundle.srs.read_bytes()]
+    chunks[index] = b"\x00"
+    pins = [hashlib.sha256(c).hexdigest() for c in chunks]
+    raw = b"".join(struct.pack(">I", len(c)) + c for c in chunks + [json.dumps(tiny_proof).encode()])
+    command = [str(rust_bin), "--verify-child", "2", "3072", *pins]
+    result = subprocess.run(command, input=raw, capture_output=True, timeout=5)
+    assert result.returncode == 2
+    assert result.stdout in (b"", b"error\n")
+    assert not result.stderr
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux prlimit and address-space policy")
