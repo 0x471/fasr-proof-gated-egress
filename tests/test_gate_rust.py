@@ -19,6 +19,18 @@ from test_service import FakeProver, OTHER_X, py_verifier
 from prover.server import MODES, Prover, Server
 
 
+@pytest.fixture(scope="session")
+def ezkl():
+    try:
+        import ezkl as mod
+    except ImportError:
+        if os.environ.get("PGE_RUST_REFERENCE_CLI"):
+            return None
+        raise
+    assert mod.__version__ == "23.0.5"
+    return mod
+
+
 @pytest.fixture(scope="module")
 def rust_bin():
     path = Path(os.environ.get("PGE_RUST_BIN", ROOT / "gate/target/release/pge-gate"))
@@ -74,7 +86,11 @@ async def exercise(rust, binary, bundle, ezkl, work, mode="honest", release="arr
                 args += ["--halt-after", str(halt)]
             proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         else:
-            gate = Gate(bundle.spec, py_verifier(bundle, ezkl), domain=load_domain(TINY / "domain.json"),
+            verifier = py_verifier(bundle, ezkl)
+            if os.environ.get("PGE_RUST_REFERENCE_CLI"):
+                from pge.cli import verify_bytes_with_cli
+                verifier = lambda data, budget: verify_bytes_with_cli(bundle, data, os.environ["PGE_RUST_REFERENCE_CLI"], budget)
+            gate = Gate(bundle.spec, verifier, domain=load_domain(TINY / "domain.json"),
                         policy=Policy(deadline=deadline, release=release, spin=0.005, proof_bytes=3072,
                                       max_pending=capacity, halt_after=halt), log=records.append)
             listener = await asyncio.start_server(gate.serve_client, "127.0.0.1", port)
@@ -184,6 +200,8 @@ def test_halt_and_busy_match_python(rust_bin, tiny_bundle, ezkl, tmp_path, relea
 
 
 def test_real_prover_matches_python(rust_bin, tiny_bundle, ezkl, srs_path, tmp_path):
+    if ezkl is None:
+        pytest.skip("real proving requires the EZKL Python wheel; CLI reference only")
     prover = Prover(srs_path)
     async def go():
         py = await exercise(False, rust_bin, tiny_bundle, ezkl, tmp_path / "py", prover=prover, deadline=30)
