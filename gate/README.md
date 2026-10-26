@@ -1,7 +1,8 @@
 # Rust gate
 
-The phase-one binary implements the Python gate's `arrival` and `fixed`
-policies. The Python gate remains the reference. See
+The gate the device runs (from 26 Oct). It implements the Python gate's
+`arrival` and `fixed` policies, plus a failure cap the Python gate doesn't
+have. The Python gate remains the reference the tests compare against. See
 [SERVICE_SPEC](../docs/SERVICE_SPEC.md) and
 [BINDING_SPEC](../docs/BINDING_SPEC.md) for the protocol and binding rules.
 
@@ -45,6 +46,22 @@ the original bundle after startup cannot change that snapshot. The network
 and scheduler still share a process and user. Process isolation does not
 replace the device's planned user, filesystem and network restrictions.
 
+## Event loop, cap and errors
+
+- One thread waits in `poll()` on the listener, the server, every client and a
+  wake-up pipe that the verifier and connect threads write to. The wait ends
+  at the earliest timer: the next fixed release (minus the spin), the next
+  expiry, a frame or idle deadline, or a reconnect. A fixed release wakes
+  `spin` early and busy-waits to its due time, at most once per loop.
+- `--cap-window W --cap-failures F --cap-cooldown C` turns on the failure
+  cap: more than F server-caused failures in the last W replies trip it, and
+  the next C replies are unavailable. `core` implements
+  `observer/cap_model.py` exactly; `tests/test_gate_rust_cap.py` checks the
+  binary against it, and `observer/cap_bound.py` gives the bound.
+- A failed `accept()` is logged as `accept_failed` and pauses accepting for
+  1 s; the gate never exits on it. The verifier child only lowers its
+  resource limits, so a gate started under a lower hard limit still verifies.
+
 ## Tests
 
 Provide the pinned setup file through `PGE_SRS`:
@@ -53,8 +70,13 @@ Provide the pinned setup file through `PGE_SRS`:
 export PGE_SRS=/absolute/path/to/kzg.srs
 cargo +nightly-2025-12-01 test --manifest-path gate/Cargo.toml --workspace --locked
 PGE_RUST_BIN="$PWD/gate/target/release/pge-gate" \
-  .venv/bin/python -m pytest tests/test_gate_rust.py tests/test_docs.py -q
+  .venv/bin/python -m pytest tests/test_gate_rust.py tests/test_gate_rust_cap.py \
+  tests/test_gate_rust_robust.py tests/test_cap_model.py tests/test_docs.py -q
 ```
+
+`PGE_TIMING=1` also runs a release-timing check (fixed release with a 5 ms
+spin must be on time); it is off by default because shared CI machines are
+too noisy for it.
 
 Set `PGE_RUST_REFERENCE_CLI` to an official pinned EZKL executable to use
 the Python gate's CLI backend in differential tests. Without a Python
