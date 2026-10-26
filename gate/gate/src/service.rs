@@ -9,12 +9,17 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, VecDeque},
     fs::OpenOptions,
-    io::{self, Write},
+    io::{self, Read, Write},
     net::{TcpListener, TcpStream},
+    os::{fd::AsRawFd, unix::net::UnixStream},
     sync::{mpsc, Arc},
     thread,
     time::{Duration, Instant},
 };
+
+const IDLE: Duration = Duration::from_secs(60);
+// Upper bound on one poll wait, so a missed wake-up can only delay housekeeping, never a release.
+const MAX_WAIT_MS: i32 = 1000;
 
 struct Client {
     conn: Connection,
@@ -49,6 +54,8 @@ struct Gate {
     requests: BTreeMap<u64, Request>,
     jobs: VecDeque<Job>,
     server: Option<Connection>,
+    accept_paused: Option<Instant>,
+    listener_fd: i32,
 }
 impl Gate {
     fn now(&self) -> u64 {
@@ -79,7 +86,8 @@ impl Gate {
             }
         }
     }
-    fn pump(&mut self, spin_allowed: bool) {
+    // Returns the clock time to wake for the next fixed release, if one is waiting.
+    fn pump(&mut self, spin_allowed: bool) -> Option<u64> {
         self.notice();
         let mut spun = !spin_allowed;
         loop {
@@ -116,14 +124,15 @@ impl Gate {
                     }
                     spun = true;
                 }
-                Step::WaitUntil(_) | Step::Idle => break,
+                Step::WaitUntil(t) => return Some(t),
+                Step::Idle => return None,
             }
         }
     }
     fn changed(&mut self) {
         self.notice();
         if self.config.policy.mode == Mode::Arrival {
-            self.pump(false);
+            let _ = self.pump(false);
         }
     }
     fn submit(&mut self, client: u64, cid: u64, x: Vec<f64>) {
@@ -279,7 +288,7 @@ impl Gate {
                 if c.conn.buffered > 65536 {
                     break;
                 }
-                if c.read_since.elapsed() >= Duration::from_secs(60) {
+                if c.read_since.elapsed() >= IDLE {
                     c.reading = false;
                     c.drain_until = Instant::now().checked_add(
                         Duration::from_nanos(self.config.policy.deadline) + Duration::from_secs(1),
@@ -358,6 +367,7 @@ pub fn run(config: Config) -> Result<(), String> {
     };
     let listener = TcpListener::bind(config.listen).map_err(|e| format!("listen: {e}"))?;
     listener.set_nonblocking(true).map_err(|_| "listener")?;
+    let listener_fd = listener.as_raw_fd();
     let mut gate = Gate {
         core: Core::new(config.policy),
         config,
@@ -371,13 +381,20 @@ pub fn run(config: Config) -> Result<(), String> {
         requests: BTreeMap::new(),
         jobs: VecDeque::new(),
         server: None,
+        accept_paused: None,
+        listener_fd,
     };
+    // Threads write one byte here when they finish, so the poll below wakes for them.
+    let (mut wake_rx, wake_tx) = UnixStream::pair().map_err(|_| "wake pipe")?;
+    wake_rx.set_nonblocking(true).map_err(|_| "wake pipe")?;
+    wake_tx.set_nonblocking(true).map_err(|_| "wake pipe")?;
     let (done_tx, done_rx) = mpsc::channel();
     let (mut active, mut client_seq) = (false, 0u64);
     let mut connecting: Option<mpsc::Receiver<io::Result<TcpStream>>> = None;
     let mut retry = Instant::now();
     let mut delay = Duration::from_millis(500);
     let mut was_connected = false;
+    let mut release_at: Option<u64> = None;
     loop {
         if was_connected && gate.server.is_none() {
             retry = Instant::now() + delay;
@@ -387,13 +404,21 @@ pub fn run(config: Config) -> Result<(), String> {
         if gate.server.is_none() && connecting.is_none() && Instant::now() >= retry {
             let (tx, rx) = mpsc::channel();
             let addr = gate.config.server;
+            let wake = wake_tx.try_clone().map_err(|_| "wake pipe")?;
             thread::Builder::new()
                 .spawn(move || {
                     let _ = tx.send(TcpStream::connect_timeout(&addr, Duration::from_secs(10)));
+                    let _ = (&wake).write(&[1]);
                 })
                 .map_err(|_| "connect thread")?;
             connecting = Some(rx);
         }
+
+        let wait = next_wait(&gate, release_at, connecting.is_none().then_some(retry));
+        poll_once(&gate, &wake_rx, wait);
+        let mut sink = [0u8; 64];
+        while matches!(wake_rx.read(&mut sink), Ok(n) if n > 0) {}
+
         if let Some(rx) = &connecting {
             if let Ok(result) = rx.try_recv() {
                 connecting = None;
@@ -411,39 +436,17 @@ pub fn run(config: Config) -> Result<(), String> {
                 }
             }
         }
-        for _ in 0..16 {
-            match listener.accept() {
-                Ok((stream, _)) => {
-                    if gate.clients.len() >= 64 {
-                        gate.log(json!({"result":"client_refused"}));
-                        continue;
-                    }
-                    client_seq = client_seq
-                        .checked_add(1)
-                        .ok_or("client counter exhausted")?;
-                    let conn = Connection::new(stream).map_err(|_| "client setup")?;
-                    gate.clients.insert(
-                        client_seq,
-                        Client {
-                            conn,
-                            last: None,
-                            outstanding: 0,
-                            reading: true,
-                            read_since: Instant::now(),
-                            drain_until: None,
-                        },
-                    );
-                }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => break,
-                Err(_) => return Err("accept".into()),
-            }
+        if gate.accept_paused.is_some_and(|t| Instant::now() >= t) {
+            gate.accept_paused = None;
+        }
+        if gate.accept_paused.is_none() {
+            accept_clients(&mut gate, &listener, &mut client_seq);
         }
         gate.read_server();
         gate.read_clients();
         gate.core.expire(gate.now());
         gate.changed();
-        if let Ok((seq, verdict)) = done_rx.try_recv() {
+        while let Ok((seq, verdict)) = done_rx.try_recv() {
             active = false;
             let decision = match verdict {
                 Verdict::Accept => Decision::accept(),
@@ -458,12 +461,14 @@ pub fn run(config: Config) -> Result<(), String> {
                 if let Some(left) = gate.core.budget(job.seq, gate.now()) {
                     let bundle = Arc::clone(&gate.bundle);
                     let tx = done_tx.clone();
+                    let wake = wake_tx.try_clone().map_err(|_| "wake pipe")?;
                     let len = gate.config.proof_bytes;
                     let seq = job.seq;
                     let started = thread::Builder::new().spawn(move || {
                         let verdict =
                             crate::verify_job(bundle, job.data, Duration::from_nanos(left), len);
                         let _ = tx.send((job.seq, verdict));
+                        let _ = (&wake).write(&[1]);
                     });
                     if started.is_ok() {
                         active = true;
@@ -480,7 +485,119 @@ pub fn run(config: Config) -> Result<(), String> {
             gate.changed();
         }
         // Exactly one spin opportunity per driver iteration, never from fail_all.
-        gate.pump(true);
-        thread::sleep(Duration::from_millis(1));
+        release_at = gate.pump(true);
+    }
+}
+
+fn accept_clients(gate: &mut Gate, listener: &TcpListener, client_seq: &mut u64) {
+    for _ in 0..16 {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                if gate.clients.len() >= 64 {
+                    gate.log(json!({"result":"client_refused"}));
+                    continue;
+                }
+                let Ok(conn) = Connection::new(stream) else {
+                    gate.log(json!({"result":"accept_failed"}));
+                    continue;
+                };
+                *client_seq = client_seq.wrapping_add(1);
+                gate.clients.insert(
+                    *client_seq,
+                    Client {
+                        conn,
+                        last: None,
+                        outstanding: 0,
+                        reading: true,
+                        read_since: Instant::now(),
+                        drain_until: None,
+                    },
+                );
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::Interrupted
+                        | io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::ConnectionReset
+                ) =>
+            {
+                continue
+            }
+            // Out of descriptors or memory: keep serving, and stop accepting for a moment
+            // so a full listen queue doesn't spin the loop (asyncio pauses the same way).
+            Err(_) => {
+                gate.log(json!({"result":"accept_failed"}));
+                gate.accept_paused = Some(Instant::now() + Duration::from_secs(1));
+                break;
+            }
+        }
+    }
+}
+
+// Milliseconds poll may sleep: until the earliest timer, rounded up so it never wakes early.
+fn next_wait(gate: &Gate, release_at: Option<u64>, retry: Option<Instant>) -> i32 {
+    let now = Instant::now();
+    let at = |ns: u64| gate.clock.checked_add(Duration::from_nanos(ns));
+    let deadline = Duration::from_nanos(gate.config.policy.deadline);
+    let mut times: Vec<Instant> = Vec::new();
+    times.extend(release_at.and_then(at));
+    times.extend(gate.core.next_expiry().and_then(at));
+    if gate.server.is_none() {
+        times.extend(retry);
+    }
+    if let Some(s) = &gate.server {
+        times.extend(s.started.and_then(|t| t.checked_add(deadline)));
+    }
+    for c in gate.clients.values() {
+        if c.reading {
+            times.extend(c.read_since.checked_add(IDLE));
+        }
+        times.extend(c.drain_until);
+    }
+    times.extend(gate.accept_paused);
+    match times.into_iter().min() {
+        None => MAX_WAIT_MS,
+        Some(t) if t <= now => 0,
+        Some(t) => {
+            let ms = (t - now).as_nanos().div_ceil(1_000_000);
+            i32::try_from(ms).unwrap_or(MAX_WAIT_MS).min(MAX_WAIT_MS)
+        }
+    }
+}
+
+fn poll_once(gate: &Gate, wake: &UnixStream, wait_ms: i32) {
+    let fd = |fd, events| libc::pollfd {
+        fd,
+        events,
+        revents: 0,
+    };
+    let mut fds = vec![fd(wake.as_raw_fd(), libc::POLLIN)];
+    if gate.accept_paused.is_none() {
+        fds.push(fd(gate.listener_fd, libc::POLLIN));
+    }
+    if let Some(s) = &gate.server {
+        let out = if s.wants_write() { libc::POLLOUT } else { 0 };
+        fds.push(fd(s.fd(), libc::POLLIN | out));
+    }
+    for c in gate.clients.values() {
+        let input = if c.reading && c.conn.buffered <= 65536 {
+            libc::POLLIN
+        } else {
+            0
+        };
+        let out = if c.conn.wants_write() {
+            libc::POLLOUT
+        } else {
+            0
+        };
+        if input | out != 0 {
+            fds.push(fd(c.conn.fd(), input | out));
+        }
+    }
+    // Any error or interruption just ends this wait; the loop re-checks everything after it.
+    unsafe {
+        libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, wait_ms);
     }
 }

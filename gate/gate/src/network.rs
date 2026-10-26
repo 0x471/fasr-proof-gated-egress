@@ -2,6 +2,7 @@ use std::{
     collections::VecDeque,
     io::{self, Read, Write},
     net::TcpStream,
+    os::fd::{AsRawFd, RawFd},
     time::Instant,
 };
 
@@ -35,6 +36,12 @@ impl Connection {
             written: 0,
             buffered: 0,
         })
+    }
+    pub fn fd(&self) -> RawFd {
+        self.stream.as_raw_fd()
+    }
+    pub fn wants_write(&self) -> bool {
+        !self.output.is_empty()
     }
     pub fn read(&mut self, limit: usize) -> Input {
         loop {
