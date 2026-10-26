@@ -54,13 +54,19 @@ replace the device's planned user, filesystem and network restrictions.
   expiry, a frame or idle deadline, or a reconnect. A fixed release wakes
   `spin` early and busy-waits to its due time, at most once per loop.
 - `--cap-window W --cap-failures F --cap-cooldown C` turns on the failure
-  cap: more than F server-caused failures in the last W replies trip it, and
-  the next C replies are unavailable. `core` implements
-  `observer/cap_model.py` exactly; `tests/test_gate_rust_cap.py` checks the
-  binary against it, and `observer/cap_bound.py` gives the bound.
+  cap: more than F server-caused failures in the last W replies trip it,
+  the history is cleared, and the next C replies are unavailable. `core`
+  implements `observer/cap_model.py` exactly; `tests/test_gate_rust_cap.py`
+  checks the binary against it. `observer/cap_bound.py` bounds only the
+  ok/unavailable sequence of admitted replies, not busy replies, timing or
+  logs (its docstring says what it covers).
 - A failed `accept()` is logged as `accept_failed` and pauses accepting for
-  1 s; the gate never exits on it. The verifier child only lowers its
-  resource limits, so a gate started under a lower hard limit still verifies.
+  1 s; the gate never exits on it, and a check that can't get resources is
+  ERROR. The verifier child only lowers its resource limits, soft and hard,
+  never asking for more than the gate was started with.
+- `--idle SECONDS` (default 60): a client that sends nothing for that long,
+  or whose replies pile up unread, stops being read; its answers drain for up
+  to the deadline plus 1 s and then it is closed.
 
 ## Tests
 
