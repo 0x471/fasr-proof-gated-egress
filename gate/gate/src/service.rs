@@ -385,9 +385,12 @@ pub fn run(config: Config) -> Result<(), String> {
         listener_fd,
     };
     // Threads write one byte here when they finish, so the poll below wakes for them.
+    // One shared writer: cloning the socket per thread would need a descriptor each time,
+    // and running out of descriptors must not stop the gate.
     let (mut wake_rx, wake_tx) = UnixStream::pair().map_err(|_| "wake pipe")?;
     wake_rx.set_nonblocking(true).map_err(|_| "wake pipe")?;
     wake_tx.set_nonblocking(true).map_err(|_| "wake pipe")?;
+    let wake_tx = Arc::new(wake_tx);
     let (done_tx, done_rx) = mpsc::channel();
     let (mut active, mut client_seq) = (false, 0u64);
     let mut connecting: Option<mpsc::Receiver<io::Result<TcpStream>>> = None;
@@ -404,14 +407,18 @@ pub fn run(config: Config) -> Result<(), String> {
         if gate.server.is_none() && connecting.is_none() && Instant::now() >= retry {
             let (tx, rx) = mpsc::channel();
             let addr = gate.config.server;
-            let wake = wake_tx.try_clone().map_err(|_| "wake pipe")?;
-            thread::Builder::new()
-                .spawn(move || {
-                    let _ = tx.send(TcpStream::connect_timeout(&addr, Duration::from_secs(10)));
-                    let _ = (&wake).write(&[1]);
-                })
-                .map_err(|_| "connect thread")?;
-            connecting = Some(rx);
+            let wake = Arc::clone(&wake_tx);
+            let spawned = thread::Builder::new().spawn(move || {
+                let _ = tx.send(TcpStream::connect_timeout(&addr, Duration::from_secs(10)));
+                let _ = (&*wake).write(&[1]);
+            });
+            if spawned.is_ok() {
+                connecting = Some(rx);
+            } else {
+                gate.log(json!({"result":"connect_failed"}));
+                retry = Instant::now() + delay;
+                delay = (delay * 2).min(Duration::from_secs(10));
+            }
         }
 
         let wait = next_wait(&gate, release_at, connecting.is_none().then_some(retry));
@@ -461,14 +468,14 @@ pub fn run(config: Config) -> Result<(), String> {
                 if let Some(left) = gate.core.budget(job.seq, gate.now()) {
                     let bundle = Arc::clone(&gate.bundle);
                     let tx = done_tx.clone();
-                    let wake = wake_tx.try_clone().map_err(|_| "wake pipe")?;
+                    let wake = Arc::clone(&wake_tx);
                     let len = gate.config.proof_bytes;
                     let seq = job.seq;
                     let started = thread::Builder::new().spawn(move || {
                         let verdict =
                             crate::verify_job(bundle, job.data, Duration::from_nanos(left), len);
                         let _ = tx.send((job.seq, verdict));
-                        let _ = (&wake).write(&[1]);
+                        let _ = (&*wake).write(&[1]);
                     });
                     if started.is_ok() {
                         active = true;
