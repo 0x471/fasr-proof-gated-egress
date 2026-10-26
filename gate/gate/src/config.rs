@@ -1,4 +1,4 @@
-use pge_core::{Mode, Policy};
+use pge_core::{Cap, Mode, Policy};
 use std::{
     collections::BTreeMap,
     net::{SocketAddr, ToSocketAddrs},
@@ -46,6 +46,9 @@ impl Config {
             "--log",
             "--spin-ms",
             "--release",
+            "--cap-window",
+            "--cap-failures",
+            "--cap-cooldown",
         ];
         while let Some(arg) = args.next() {
             let (key, value) = if let Some((k, v)) = arg.split_once('=') {
@@ -84,6 +87,25 @@ impl Config {
         if !(1..=65536).contains(&proof_bytes) {
             return Err("invalid proof length".into());
         }
+        let mut policy =
+            Policy::new(deadline, capacity, halt, mode, spin).map_err(str::to_owned)?;
+        if let Some(window) = map.get("--cap-window") {
+            let number = |k, default| {
+                get(k, default)
+                    .parse::<u32>()
+                    .map_err(|_| "invalid cap".to_owned())
+            };
+            let window = window.parse::<u32>().map_err(|_| "invalid cap")?;
+            let cap = Cap::new(
+                window,
+                number("--cap-failures", "0")?,
+                number("--cap-cooldown", "1")?,
+            )
+            .map_err(str::to_owned)?;
+            policy = policy.with_cap(cap);
+        } else if map.contains_key("--cap-failures") || map.contains_key("--cap-cooldown") {
+            return Err("cap flags need --cap-window".into());
+        }
         Ok(Self {
             listen: address(required("--listen")?)?,
             server: address(required("--server")?)?,
@@ -91,7 +113,7 @@ impl Config {
             pins: required("--pins")?.into(),
             domain: map.get("--domain").map(PathBuf::from),
             log: map.get("--log").map(PathBuf::from),
-            policy: Policy::new(deadline, capacity, halt, mode, spin).map_err(str::to_owned)?,
+            policy,
             proof_bytes,
         })
     }

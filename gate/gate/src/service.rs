@@ -85,6 +85,9 @@ impl Gate {
         loop {
             match self.core.pump(self.now(), spun) {
                 Step::Release(seq, decision) => {
+                    if self.core.take_cap_trip() {
+                        self.log(json!({"result":"cap_tripped"}));
+                    }
                     if let Some(p) = self.requests.remove(&seq) {
                         let reply = if decision.ok() {
                             p.y.map(Reply::Ok).unwrap_or(Reply::Unavailable)
