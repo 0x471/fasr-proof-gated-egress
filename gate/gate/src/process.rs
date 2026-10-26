@@ -157,7 +157,7 @@ pub fn limits(cpu: u64) -> io::Result<()> {
             (libc::RLIMIT_FSIZE, 0),
             (libc::RLIMIT_NOFILE, 64),
         ] {
-            // Only ever lower a limit: asking for more than the inherited hard limit fails.
+            // Only ever lower a limit, soft or hard: never more than the gate itself was given.
             let mut old = libc::rlimit {
                 rlim_cur: 0,
                 rlim_max: 0,
@@ -165,7 +165,7 @@ pub fn limits(cpu: u64) -> io::Result<()> {
             if libc::getrlimit(resource, &mut old) != 0 {
                 return Err(io::Error::last_os_error());
             }
-            let value = (value as libc::rlim_t).min(old.rlim_max);
+            let value = (value as libc::rlim_t).min(old.rlim_cur).min(old.rlim_max);
             let limit = libc::rlimit {
                 rlim_cur: value,
                 rlim_max: value,
@@ -183,7 +183,9 @@ pub fn limits(cpu: u64) -> io::Result<()> {
             if libc::getrlimit(libc::RLIMIT_AS, &mut old) != 0 {
                 return Err(io::Error::last_os_error());
             }
-            let value = ((256 << 20) as libc::rlim_t).min(old.rlim_max);
+            let value = ((256 << 20) as libc::rlim_t)
+                .min(old.rlim_cur)
+                .min(old.rlim_max);
             let limit = libc::rlimit {
                 rlim_cur: value,
                 rlim_max: value,
