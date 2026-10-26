@@ -3,6 +3,7 @@ use std::{
     collections::BTreeMap,
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
+    time::Duration,
 };
 
 pub struct Config {
@@ -14,6 +15,7 @@ pub struct Config {
     pub log: Option<PathBuf>,
     pub policy: Policy,
     pub proof_bytes: usize,
+    pub idle: Duration,
 }
 fn seconds(s: &str, allow_zero: bool, max: f64) -> Result<u64, String> {
     let v: f64 = s.parse().map_err(|_| "invalid time")?;
@@ -49,6 +51,7 @@ impl Config {
             "--cap-window",
             "--cap-failures",
             "--cap-cooldown",
+            "--idle",
         ];
         while let Some(arg) = args.next() {
             let (key, value) = if let Some((k, v)) = arg.split_once('=') {
@@ -72,6 +75,7 @@ impl Config {
             _ => return Err("invalid release".into()),
         };
         let deadline = seconds(get("--deadline", "10"), false, 3600.)?;
+        let idle = Duration::from_nanos(seconds(get("--idle", "60"), false, 3600.)?);
         let spin_ms: f64 = get("--spin-ms", "0").parse().map_err(|_| "invalid spin")?;
         let spin = seconds(&(spin_ms / 1000.).to_string(), true, 0.05)?;
         let capacity = get("--max-pending", "32")
@@ -115,6 +119,7 @@ impl Config {
             log: map.get("--log").map(PathBuf::from),
             policy,
             proof_bytes,
+            idle,
         })
     }
 }

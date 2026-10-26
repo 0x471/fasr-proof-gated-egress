@@ -71,7 +71,7 @@ fn main() -> ExitCode {
         return child(&args);
     }
     if args == ["--help"] {
-        println!("pge-gate --listen HOST:PORT --server HOST:PORT --bundle DIR --pins FILE --proof-bytes N [--domain FILE] [--deadline SECONDS] [--max-pending N] [--halt-after N] [--log FILE] [--spin-ms MS] [--release arrival|fixed]");
+        println!("pge-gate --listen HOST:PORT --server HOST:PORT --bundle DIR --pins FILE --proof-bytes N [--domain FILE] [--deadline SECONDS] [--max-pending N] [--halt-after N] [--log FILE] [--spin-ms MS] [--release arrival|fixed] [--idle SECONDS] [--cap-window W --cap-failures F --cap-cooldown C]");
         return ExitCode::SUCCESS;
     }
     match config::Config::parse(args).and_then(service::run) {
