@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-// Upper bound on one poll wait, so a missed wake-up can only delay housekeeping, never a release.
+// Upper bound on one poll wait: a lost wake-up delays the loop by at most this long.
 const MAX_WAIT_MS: i32 = 1000;
 
 struct Client {
@@ -604,8 +604,10 @@ fn poll_once(gate: &Gate, wake: &UnixStream, wait_ms: i32) {
             fds.push(fd(c.conn.fd(), input | out));
         }
     }
-    // Any error or interruption just ends this wait; the loop re-checks everything after it.
-    unsafe {
-        libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, wait_ms);
+    // An interruption just ends this wait; the loop re-checks everything after it. Any other
+    // poll error (e.g. ENOMEM) sleeps instead, so a failing poll can't spin the loop.
+    let ret = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, wait_ms) };
+    if ret < 0 && io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+        thread::sleep(Duration::from_millis(wait_ms.clamp(1, 10) as u64));
     }
 }
