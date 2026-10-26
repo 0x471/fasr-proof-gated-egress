@@ -3,7 +3,7 @@
 .wrangler/
 __pycache__/
 .pytest_cache/
-.deps/
+.deps
 gate/target/
 gate/fuzz/target/
 gate/fuzz/artifacts/
