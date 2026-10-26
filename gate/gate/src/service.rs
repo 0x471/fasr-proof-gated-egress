@@ -17,7 +17,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-const IDLE: Duration = Duration::from_secs(60);
 // Upper bound on one poll wait, so a missed wake-up can only delay housekeeping, never a release.
 const MAX_WAIT_MS: i32 = 1000;
 
@@ -285,15 +284,17 @@ impl Gate {
                     }
                     break;
                 }
-                if c.conn.buffered > 65536 {
-                    break;
-                }
-                if c.read_since.elapsed() >= IDLE {
+                // The idle check comes first: a client that sends but never reads would otherwise
+                // keep an expired idle timer, and poll would get a zero timeout forever.
+                if c.read_since.elapsed() >= self.config.idle {
                     c.reading = false;
                     c.drain_until = Instant::now().checked_add(
                         Duration::from_nanos(self.config.policy.deadline) + Duration::from_secs(1),
                     );
                     self.log(json!({"result":"client_idle"}));
+                    break;
+                }
+                if c.conn.buffered > 65536 {
                     break;
                 }
                 match c.conn.read(self.wire.request_size) {
@@ -559,7 +560,7 @@ fn next_wait(gate: &Gate, release_at: Option<u64>, retry: Option<Instant>) -> i3
     }
     for c in gate.clients.values() {
         if c.reading {
-            times.extend(c.read_since.checked_add(IDLE));
+            times.extend(c.read_since.checked_add(gate.config.idle));
         }
         times.extend(c.drain_until);
     }
