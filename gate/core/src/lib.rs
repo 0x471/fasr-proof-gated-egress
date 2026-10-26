@@ -8,6 +8,34 @@ pub enum Mode {
     Fixed,
 }
 
+// Failure cap, the same automaton as observer/cap_model.py: at most `failures` server-caused
+// failures among the last `window` replies that weren't capped; one more makes the next
+// `cooldown` replies unavailable, whatever the server does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cap {
+    pub window: u32,
+    pub failures: u32,
+    pub cooldown: u32,
+}
+
+impl Cap {
+    pub fn new(window: u32, failures: u32, cooldown: u32) -> Result<Self, &'static str> {
+        // With no cooldown a trip only clears the window, so the cap would bound nothing.
+        if !(1..=4096).contains(&window) || failures >= window || !(1..=1 << 20).contains(&cooldown)
+        {
+            return Err("invalid cap");
+        }
+        Ok(Self {
+            window,
+            failures,
+            cooldown,
+        })
+    }
+}
+
+// Results the server can cause; "halted" and "capped" are the gate's own.
+const COUNTED: [&str; 5] = ["reject", "error", "deadline", "disconnect", "no_server"];
+
 #[derive(Clone, Copy, Debug)]
 pub struct Policy {
     pub deadline: u64,
@@ -15,6 +43,7 @@ pub struct Policy {
     pub halt_after: Option<u64>,
     pub mode: Mode,
     pub spin: u64,
+    pub cap: Option<Cap>,
 }
 
 impl Policy {
@@ -39,7 +68,14 @@ impl Policy {
             halt_after,
             mode,
             spin,
+            cap: None,
         })
+    }
+    pub fn with_cap(self, cap: Cap) -> Self {
+        Self {
+            cap: Some(cap),
+            ..self
+        }
     }
 }
 
@@ -103,6 +139,9 @@ pub struct Core {
     failures: u64,
     halted: bool,
     halt_notice: Option<u64>,
+    cap_ages: Vec<u32>,
+    cap_left: u32,
+    cap_trip: bool,
 }
 
 impl Core {
@@ -114,6 +153,9 @@ impl Core {
             failures: 0,
             halted: false,
             halt_notice: None,
+            cap_ages: Vec::new(),
+            cap_left: 0,
+            cap_trip: false,
         }
     }
     pub fn len(&self) -> usize {
@@ -130,6 +172,35 @@ impl Core {
     }
     pub fn take_halt_notice(&mut self) -> Option<u64> {
         self.halt_notice.take()
+    }
+    // True once after the release that tripped the failure cap.
+    pub fn take_cap_trip(&mut self) -> bool {
+        std::mem::take(&mut self.cap_trip)
+    }
+
+    fn apply_cap(&mut self, decision: Decision) -> Decision {
+        let Some(cap) = self.policy.cap else {
+            return decision;
+        };
+        if self.cap_left > 0 {
+            self.cap_left -= 1;
+            return Decision::failure("capped", "");
+        }
+        self.cap_ages.retain_mut(|a| {
+            *a += 1;
+            *a < cap.window
+        });
+        if !COUNTED.contains(&decision.result) {
+            return decision;
+        }
+        if self.cap_ages.len() >= cap.failures as usize {
+            self.cap_ages.clear();
+            self.cap_left = cap.cooldown;
+            self.cap_trip = true;
+        } else {
+            self.cap_ages.push(0);
+        }
+        decision
     }
 
     pub fn admit(&mut self, now: u64, server: bool) -> Admission {
@@ -281,7 +352,7 @@ impl Core {
         if late {
             self.count_failure();
         }
-        Step::Release(seq, decision)
+        Step::Release(seq, self.apply_cap(decision))
     }
 }
 
