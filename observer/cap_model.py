@@ -3,7 +3,8 @@
 The server chooses which answers fail, so without a cap the pattern of failures can carry about
 one bit per answer. With the cap, at most `failures` of the last `window` replies (not counting
 capped ones) may be server-caused failures; one more trips a cooldown in which the next
-`cooldown` replies are all unavailable, whatever the server does. The replies an outsider sees
+`cooldown` replies are all unavailable, whatever the server does. A trip also clears the
+history, so the window starts empty after the cooldown. The replies an outsider sees
 then follow the automaton below, which observer/cap_bound.py counts to bound the channel.
 This is the reference model: the gate (gate/core in Rust) must behave exactly like step().
 """

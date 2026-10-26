@@ -1,9 +1,16 @@
-"""Upper bound on the failure channel under the gate's failure cap.
+"""Upper bound on what the cap-processed status sequence can carry under the failure cap.
 
-An outsider sees each reply as ok or unavailable. Under the cap (observer/cap_model.py, the
-reference the Rust gate's cap is tested against) only some of the 2^n patterns of n replies can
-occur, whatever the server does; log2 of their number bounds the bits the failure pattern can
-carry. Counted exactly by dynamic programming over the cap's states.
+What it counts: the ok/unavailable status of the replies to n admitted requests, in the order
+they leave the gate, starting from an empty cap. Under the cap (observer/cap_model.py, the
+reference the Rust gate's cap is tested against) only some of the 2^n such sequences can occur,
+whatever the server does; log2 of their number bounds the bits that sequence can carry. Counted
+exactly by dynamic programming over the cap's states.
+
+What it doesn't count: replies that never pass the cap (busy and halted answers at admission),
+when replies leave, ids and interleaving across clients, missing replies and the gate's logs.
+Under fixed release with halt_after off, busy answers don't depend on the server (every admitted
+request holds its slot until its fixed release time); under arrival release the server also
+controls timing and, by answering slowly, which later requests are busy.
 
     python observer/cap_bound.py --window 64 --failures 1 --cooldown 64 --n 4096
 """
@@ -62,7 +69,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--n", type=int, default=1024, help="number of replies")
     a = ap.parse_args(argv)
     b = bits(a.window, a.failures, a.cooldown, a.n)
-    print(f"at most {b:.2f} bits in {a.n} replies ({b / a.n:.4f} bit per reply; no cap: 1)")
+    print(f"at most {b:.2f} bits in the statuses of {a.n} admitted replies "
+          f"({b / a.n:.4f} bit per admitted reply; no cap: 1). Not counted: busy replies, "
+          "timing, ids, missing replies, logs (see the module docstring)")
 
 
 if __name__ == "__main__":
