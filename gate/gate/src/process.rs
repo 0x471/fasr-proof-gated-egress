@@ -157,9 +157,18 @@ pub fn limits(cpu: u64) -> io::Result<()> {
             (libc::RLIMIT_FSIZE, 0),
             (libc::RLIMIT_NOFILE, 64),
         ] {
+            // Only ever lower a limit: asking for more than the inherited hard limit fails.
+            let mut old = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(resource, &mut old) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let value = (value as libc::rlim_t).min(old.rlim_max);
             let limit = libc::rlimit {
-                rlim_cur: value as libc::rlim_t,
-                rlim_max: value as libc::rlim_t,
+                rlim_cur: value,
+                rlim_max: value,
             };
             if libc::setrlimit(resource, &limit) != 0 {
                 return Err(io::Error::last_os_error());
@@ -167,9 +176,17 @@ pub fn limits(cpu: u64) -> io::Result<()> {
         }
         #[cfg(target_os = "linux")]
         {
+            let mut old = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_AS, &mut old) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let value = ((256 << 20) as libc::rlim_t).min(old.rlim_max);
             let limit = libc::rlimit {
-                rlim_cur: 256 << 20,
-                rlim_max: 256 << 20,
+                rlim_cur: value,
+                rlim_max: value,
             };
             if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
                 return Err(io::Error::last_os_error());
