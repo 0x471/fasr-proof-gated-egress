@@ -1,6 +1,5 @@
 """The Rust gate's failure cap against the reference model (observer/cap_model.py), over TCP."""
 import asyncio
-import json
 import random
 import shutil
 import subprocess
@@ -11,6 +10,7 @@ import pytest
 from conftest import ROOT, TINY, TINY_X
 from pge.protocol import Wire, frame, read_frame
 from test_gate_rust import ezkl, free_port, rust_bin  # noqa: F401
+from test_gate_rust_robust import log_records
 from test_service import FakeProver
 from prover.server import Server
 
@@ -70,7 +70,7 @@ async def run_gate(binary, bundle, work, fail, cap):
             ok.append(reply["ok"])
         writer.close()
         assert proc.returncode is None
-        records = [json.loads(line) for line in logpath.read_text().splitlines()]
+        records = await log_records(logpath, lambda r: sum("seq" in x for x in r) >= len(fail))
     finally:
         if proc.returncode is None:
             proc.kill()
