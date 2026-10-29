@@ -1,14 +1,14 @@
 """Signed updates through the Rust binary: every refusal rule, and an endpoint that runs from the store."""
 import asyncio
 import hashlib
-import json
 import subprocess
 
 import pytest
 
 from conftest import TINY, TINY_X
 from pge.protocol import Wire, frame, read_frame
-from test_endpoint_rust import free_port, rust_bin  # noqa: F401
+from test_endpoint_rust import ezkl, free_port, rust_bin  # noqa: F401
+from test_endpoint_rust_robust import log_records
 from test_service import FakeProver
 from prover.server import Server
 
@@ -156,11 +156,12 @@ def run_endpoint(binary, env, tiny_bundle, work):
             await writer.drain()
             reply = Wire.for_spec(tiny_bundle.spec).parse_reply(await asyncio.wait_for(read_frame(reader, 65536), 10))
             writer.close()
+            records = await log_records(log, lambda r: len(r) >= 2)
         finally:
             proc.terminate()
             await proc.wait()
             upstream.close()
-        return reply, [json.loads(line) for line in log.read_text().splitlines()]
+        return reply, records
     return asyncio.run(go())
 
 
