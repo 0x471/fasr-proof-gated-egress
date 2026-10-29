@@ -100,6 +100,9 @@ async def exercise(rust, binary, bundle, ezkl, work, mode="honest", release="arr
             await asyncio.sleep(0.15)
         else:
             await asyncio.wait_for(connected.wait(), 10)
+            if rust:
+                # The accept above can come before the Rust endpoint's loop registers the link.
+                await asyncio.sleep(0.5)
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         clients.append(writer)
         before = time.monotonic()
