@@ -7,7 +7,9 @@ export OUT="${OUT:-runs/matrix}" DEADLINE="${DEADLINE:-4}"
 BITS=1101001110100111
 failed=0
 run() { device/pi_scenario.sh "$@" || failed=$((failed + 1)); }
-for r in immediate arrival fixed; do
+# The Rust gate (GATE=rust) has no immediate release.
+releases="immediate arrival fixed"; [[ "${GATE:-python}" == rust ]] && releases="arrival fixed"
+for r in $releases; do
   run "honest_$r" "$r" 16 1 -- --mode honest
   run "timing_$r" "$r" 16 1 -- --mode timing_bits --bits "$BITS" --slot 1.0
   run "order_$r" "$r" 24 3 -- --mode order_bits --batch 3 --bits "$BITS"
