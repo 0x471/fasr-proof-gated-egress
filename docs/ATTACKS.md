@@ -3,15 +3,15 @@
 Every scenario catalogued against the device, by us, by reviewers or by testers: what it targets, how far it got, and its evidence (a test, a Pi run, or none yet). Living document; final in W7.
 
 <!-- ANCHOR: summary -->
-The catalogue has 35 scenarios: 24 stopped, 2 allowed on purpose, 7 that still work, are only partly stopped or are untested, and 2 out of scope. Some were shown on the Pi, some only in tests, and some are only proposed; the counts describe coverage, not a security score.
+The catalogue has 43 scenarios: 31 stopped, 2 allowed on purpose, 8 that still work, are only partly stopped or are untested, and 2 out of scope. Some were shown on the Pi, some only in tests, and some are only proposed; the counts describe coverage, not a security score.
 <!-- ANCHOR_END: summary -->
 
 <!-- ANCHOR: outcomes -->
 | Outcome | Scenarios | Examples |
 |---|---|---|
-| Stopped | 24 | Edited answers, a proof for a different question, a proof from another model, padded proofs, garbage or oversized messages, answering twice or late, malicious proofs that try to exhaust the checker, using a disconnect to stall the endpoint |
+| Stopped | 31 | Edited answers, a proof for a different question, a proof from another model, padded proofs, garbage or oversized messages, answering twice or late, malicious proofs that try to exhaust the checker, using a disconnect to stall the endpoint, rolled-back, replayed or substituted updates, updates for another device or from an unlisted key |
 | Allowed on purpose | 2 | The same question gets the same answer again (the server has no choice there); an endpoint set to stop after failures can be stopped by the server |
-| Still works, partly stopped or untested | 7 | Timing (much reduced), failing on purpose, never answering, keeping the endpoint busy, loading the endpoint to delay releases, other services on the standard system, probing the endpoint's rules |
+| Still works, partly stopped or untested | 8 | Timing (much reduced), failing on purpose, never answering, keeping the endpoint busy, loading the endpoint to delay releases, other services on the standard system, probing the endpoint's rules, restoring a whole older copy of the update store |
 | Out of scope | 2 | Learning the model from many correct answers; physical attacks |
 <!-- ANCHOR_END: outcomes -->
 
@@ -73,6 +73,21 @@ Pi results: 16 Oct 2026 (v0 software) and 19 Oct 2026 (v1 software), both on the
 | K33 | With fixed release and spin, answer a later request so it is due inside the spin window while an earlier one stays silent, so the later reply overtakes the earlier deadline error and the order of two `unavailable` replies follows the server (found by review, 19 Oct) | v1 (software) | shown in tests | blocked: fixed release sends held answers in admission order, each not before its own deadline; only the next answer in order may busy-wait | `test_fixed_release_keeps_admission_order_whatever_the_server_does`, `test_spin_never_blocks_the_loop_for_long` |
 | K34 | Load the endpoint on purpose (answer many requests at once, flood stale answers) so releases leave late or checks run past their deadline: timing and failures the server controls through load (found by review, 19 Oct) | v1 (software) | proposed | open: not measured; all leakage runs so far used one client at a time. Each spin blocks the loop for at most `spin` (K35), but load can still delay the loop and the verifier | none yet; planned: the concurrent-client matrix |
 | K35 | Disconnect, or trigger a halt, while many answers are due a few ms apart, so that releasing them chains one busy-wait per answer and stalls the endpoint's event loop for tens of milliseconds, delaying every other client (found by review, 20 Oct; reproduced in tests with 20 answers and a 5 ms spin) | v1 (software) | shown in tests | blocked: releases only schedule the pump, which runs in its own callback and busy-waits at most once per run, so no callback blocks the loop for more than `spin` | `test_failing_many_answers_at_once_never_spins_for_long` |
+
+## Updates
+
+Signed updates (`docs/UPDATE_SPEC.md`), added 29 Oct. The AI server can't send updates at all: they are applied only by `pge-endpoint --apply-update` while the endpoint isn't serving. These rows are about whoever can hand the device an update directory or edit its store.
+
+| # | Attack | Version | Level | Result | Covered by |
+|---|---|---|---|---|---|
+| K36 | Roll back to an older signed update (lower version) | v1 (software) | shown in tests | blocked: refused rollback | `test_rollback_and_replay_are_refused`, `an_older_version_is_a_rollback` |
+| K37 | Apply a different signed manifest with the current version | v1 (software) | shown in tests | blocked: refused replay; the same manifest again is a no-op | `test_rollback_and_replay_are_refused`, `a_different_manifest_with_the_same_version_is_a_replay` |
+| K38 | Bring back an older key list that still lists a revoked key | v1 (software) | shown in tests | blocked: refused rollback | `test_an_older_key_list_is_refused`, `an_older_key_list_is_a_rollback` |
+| K39 | Key or device confusion: an update for another device, signed by a key the root doesn't list or has removed, by the wrong listed key, or a key list not signed by the root | v1 (software) | shown in tests | blocked: refused device, key or signature | `test_key_and_device_confusion_are_refused` |
+| K40 | Substitute one file (settings, verification key, setup file, domain) in an otherwise valid update | v1 (software) | shown in tests | blocked: refused bundle | `test_a_substituted_file_is_refused` |
+| K41 | Edit a signed manifest or key list, or write its signature another way | v1 (software) | shown in tests | blocked: refused signature or format | `test_an_edited_manifest_is_refused`, `manifests_have_exactly_one_form`, `signature_files_have_one_form` |
+| K42 | Change the stored files or the state after an update was applied | v1 (software) | shown in tests | blocked: the endpoint refuses to start (`store refused`) | `test_the_endpoint_refuses_a_changed_store` |
+| K43 | Restore a whole older copy of the store (state and files together), e.g. from an old SD card image | v1 (software) | proposed | open: the state lives on the card, so a complete old copy is self-consistent; needs a counter the card can't roll back (TPM, v2) | none yet |
 
 ## Out of scope
 

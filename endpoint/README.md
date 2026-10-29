@@ -36,6 +36,9 @@ release is intentionally unsupported.
 - `core` is a deterministic state machine. Its caller supplies time and
   events and executes release, wait and spin actions.
 - `verify` binds requests and checks immutable bundle snapshots in memory.
+- `update` decides whether a signed update may be applied: key list signed by
+  the root, manifest signed by a listed key, this device, no rollback or
+  replay, every file's hash. `pge-sign` (same crate) signs offline.
 - `endpoint` owns sockets, timers and logs. Each proof runs in a fresh child
   with resource limits; bounded pipe records carry the bundle and proof.
 
@@ -67,6 +70,13 @@ replace the device's planned user, filesystem and network restrictions.
 - `--idle SECONDS` (default 60): a client that sends nothing for that long,
   or whose replies pile up unread, stops being read; its answers drain for up
   to the deadline plus 1 s and then it is closed.
+
+## Signed updates
+
+`pge-endpoint --apply-update DIR --root FILE --device ID --store STORE` applies
+a signed update, and `--store STORE --root FILE --device ID` runs the endpoint
+from it instead of `--bundle`/`--pins`/`--domain`. Formats, rules and limits are
+in [UPDATE_SPEC](../docs/UPDATE_SPEC.md).
 
 ## Tests
 
