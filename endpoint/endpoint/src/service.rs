@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, Source},
     network::{Connection, Input},
 };
 use pge_core::{Admission, Answer, Core, Decision, Mode, Step};
@@ -345,16 +345,38 @@ impl Endpoint {
 }
 
 pub fn run(config: Config) -> Result<(), String> {
-    let pins = read_regular(&config.pins, 65536).map_err(str::to_owned)?;
-    let pins = Pins::parse(std::str::from_utf8(&pins).map_err(|_| "pins encoding")?)
-        .map_err(str::to_owned)?;
-    let bundle = Arc::new(Bundle::load(&config.bundle, pins).map_err(str::to_owned)?);
-    let domain = config
-        .domain
-        .as_ref()
-        .map(|p| read_regular(p, 1 << 20).and_then(|b| Domain::parse(&b)))
-        .transpose()
-        .map_err(str::to_owned)?;
+    let (bundle, domain, version) = match &config.source {
+        Source::Pinned {
+            bundle,
+            pins,
+            domain,
+        } => {
+            let pins = read_regular(pins, 65536).map_err(str::to_owned)?;
+            let pins = Pins::parse(std::str::from_utf8(&pins).map_err(|_| "pins encoding")?)
+                .map_err(str::to_owned)?;
+            let domain = domain
+                .as_ref()
+                .map(|p| read_regular(p, 1 << 20).and_then(|b| Domain::parse(&b)))
+                .transpose()
+                .map_err(str::to_owned)?;
+            (
+                Bundle::load(bundle, pins).map_err(str::to_owned)?,
+                domain,
+                None,
+            )
+        }
+        Source::Store {
+            store,
+            root,
+            device,
+        } => {
+            let active = crate::store::load(store, root, device)?;
+            let domain = Domain::parse(&active.domain).map_err(str::to_owned)?;
+            let bundle = Bundle::load(&active.dir, active.pins).map_err(str::to_owned)?;
+            (bundle, Some(domain), Some(active.version))
+        }
+    };
+    let bundle = Arc::new(bundle);
     let wire = bundle.spec.wire().map_err(str::to_owned)?;
     let log: Box<dyn Write> = match &config.log {
         Some(p) => Box::new(
@@ -385,6 +407,9 @@ pub fn run(config: Config) -> Result<(), String> {
         accept_paused: None,
         listener_fd,
     };
+    if let Some(v) = version {
+        endpoint.log(json!({"result":"update","version":v}));
+    }
     // Threads write one byte here when they finish, so the poll below wakes for them.
     // One shared writer: cloning the socket per thread would need a descriptor each time,
     // and running out of descriptors must not stop the endpoint.

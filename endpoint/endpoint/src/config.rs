@@ -6,12 +6,23 @@ use std::{
     time::Duration,
 };
 
+/// Where the model comes from: fixed files pinned by hash, or the signed update store.
+pub enum Source {
+    Pinned {
+        bundle: PathBuf,
+        pins: PathBuf,
+        domain: Option<PathBuf>,
+    },
+    Store {
+        store: PathBuf,
+        root: PathBuf,
+        device: String,
+    },
+}
 pub struct Config {
     pub listen: SocketAddr,
     pub server: SocketAddr,
-    pub bundle: PathBuf,
-    pub pins: PathBuf,
-    pub domain: Option<PathBuf>,
+    pub source: Source,
     pub log: Option<PathBuf>,
     pub policy: Policy,
     pub proof_bytes: usize,
@@ -52,6 +63,9 @@ impl Config {
             "--cap-failures",
             "--cap-cooldown",
             "--idle",
+            "--store",
+            "--root",
+            "--device",
         ];
         while let Some(arg) = args.next() {
             let (key, value) = if let Some((k, v)) = arg.split_once('=') {
@@ -110,12 +124,32 @@ impl Config {
         } else if map.contains_key("--cap-failures") || map.contains_key("--cap-cooldown") {
             return Err("cap flags need --cap-window".into());
         }
+        let pinned = ["--bundle", "--pins", "--domain"]
+            .iter()
+            .any(|k| map.contains_key(*k));
+        let source = if map.contains_key("--store") {
+            if pinned {
+                return Err("--store excludes --bundle, --pins and --domain".into());
+            }
+            Source::Store {
+                store: required("--store")?.into(),
+                root: required("--root")?.into(),
+                device: required("--device")?.to_owned(),
+            }
+        } else {
+            if map.contains_key("--root") || map.contains_key("--device") {
+                return Err("--root and --device need --store".into());
+            }
+            Source::Pinned {
+                bundle: required("--bundle")?.into(),
+                pins: required("--pins")?.into(),
+                domain: map.get("--domain").map(PathBuf::from),
+            }
+        };
         Ok(Self {
             listen: address(required("--listen")?)?,
             server: address(required("--server")?)?,
-            bundle: required("--bundle")?.into(),
-            pins: required("--pins")?.into(),
-            domain: map.get("--domain").map(PathBuf::from),
+            source,
             log: map.get("--log").map(PathBuf::from),
             policy,
             proof_bytes,
