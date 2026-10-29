@@ -188,7 +188,7 @@ Signals the server controls even with valid proofs:
 | What an answer says | proof + binding | blocked for the test model |
 | Order of replies | arrival-order release | the ordering code we tried no longer gets through (one connection) |
 | Timing | fixed release time, plus spin | much reduced; see below |
-| Which answers fail | a cap on failures per window (planned) | open |
+| Which answers fail | a cap on failures per window (in the Rust gate; not yet measured on the Pi) | open |
 | Reply size | fixed-size replies | blocked at the message level; TCP packets are still the stock OS's |
 | Logs | fixed words only | the number and timing of events still follow the server |
 | Keeping the gate busy | fixed time slots (planned) | open |
