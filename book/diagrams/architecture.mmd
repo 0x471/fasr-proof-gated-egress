@@ -4,9 +4,9 @@ flowchart LR
         O["Observer<br/>observer/client.py"]
         P["AI server + EZKL prover<br/>prover/server.py"]
     end
-    subgraph PI["Raspberry Pi 4: the gate"]
+    subgraph PI["Raspberry Pi 4: the endpoint"]
         direction LR
-        SVC["Gate service<br/>pge/service.py<br/>one asyncio process"]
+        SVC["Endpoint service<br/>pge/service.py<br/>one asyncio process"]
         BUN[("Pinned bundle<br/>settings.json, vk.key, kzg.srs")]
         CHK["EZKL CLI<br/>one limited child<br/>process per check"]
         LOG[("Log<br/>fixed words only")]

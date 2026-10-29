@@ -1,4 +1,4 @@
-"""Black-box compatibility checks. Both gates use real verification and TCP."""
+"""Black-box compatibility checks. Both endpoints use real verification and TCP."""
 import asyncio
 import hashlib
 import json
@@ -15,7 +15,7 @@ import pytest
 
 from conftest import ROOT, TINY, TINY_X
 from pge.protocol import Wire, frame, read_frame
-from pge.service import Gate, Policy, load_domain
+from pge.service import Endpoint, Policy, load_domain
 from test_service import FakeProver, OTHER_X, py_verifier
 from prover.server import MODES, Prover, Server
 
@@ -34,11 +34,11 @@ def ezkl():
 
 @pytest.fixture(scope="module")
 def rust_bin():
-    path = Path(os.environ.get("PGE_RUST_BIN", ROOT / "gate/target/release/pge-gate"))
+    path = Path(os.environ.get("PGE_RUST_BIN", ROOT / "endpoint/target/release/pge-endpoint"))
     if not path.is_file():
         if os.environ.get("PGE_RUST_BIN"):
             pytest.fail(f"missing configured Rust binary: {path}")
-        pytest.skip("build gate/ or set PGE_RUST_BIN")
+        pytest.skip("build endpoint/ or set PGE_RUST_BIN")
     return path.resolve()
 
 
@@ -74,8 +74,8 @@ async def exercise(rust, binary, bundle, ezkl, work, mode="honest", release="arr
         upstream.close()
         await upstream.wait_closed()
     port, wire = free_port(), Wire.for_spec(bundle.spec)
-    proc, listener, link, gate = None, None, None, None
-    logpath = work / "gate.log"
+    proc, listener, link, endpoint = None, None, None, None
+    logpath = work / "endpoint.log"
     clients = []
     try:
         if rust:
@@ -91,11 +91,11 @@ async def exercise(rust, binary, bundle, ezkl, work, mode="honest", release="arr
             if os.environ.get("PGE_RUST_REFERENCE_CLI"):
                 from pge.cli import verify_bytes_with_cli
                 verifier = lambda data, budget: verify_bytes_with_cli(bundle, data, os.environ["PGE_RUST_REFERENCE_CLI"], budget)
-            gate = Gate(bundle.spec, verifier, domain=load_domain(TINY / "domain.json"),
+            endpoint = Endpoint(bundle.spec, verifier, domain=load_domain(TINY / "domain.json"),
                         policy=Policy(deadline=deadline, release=release, spin=0.005, proof_bytes=3072,
                                       max_pending=capacity, halt_after=halt), log=records.append)
-            listener = await asyncio.start_server(gate.serve_client, "127.0.0.1", port)
-            link = asyncio.create_task(gate.link("127.0.0.1", sport))
+            listener = await asyncio.start_server(endpoint.serve_client, "127.0.0.1", port)
+            link = asyncio.create_task(endpoint.link("127.0.0.1", sport))
         if case == "no_server":
             await asyncio.sleep(0.15)
         else:
@@ -151,8 +151,8 @@ async def exercise(rust, binary, bundle, ezkl, work, mode="honest", release="arr
         upstream.close()
         await upstream.wait_closed()
         server.pool.shutdown(wait=True)
-        if gate:
-            gate._pool.shutdown(wait=True)
+        if endpoint:
+            endpoint._pool.shutdown(wait=True)
 
 
 @pytest.mark.parametrize("mode", MODES)

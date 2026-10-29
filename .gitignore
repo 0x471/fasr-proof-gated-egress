@@ -4,10 +4,10 @@
 __pycache__/
 .pytest_cache/
 .deps
-gate/target/
-gate/fuzz/target/
-gate/fuzz/artifacts/
-gate/fuzz/corpus/
+endpoint/target/
+endpoint/fuzz/target/
+endpoint/fuzz/artifacts/
+endpoint/fuzz/corpus/
 
 # Scratch prover outputs (regenerable; large keys)
 prover/artifacts/
@@ -23,7 +23,7 @@ spike/rust-verifier/.build/
 spike/stwo-verifier/.build/
 spike/stwo-verifier/target/
 
-# Gate scenario outputs (device/pi_scenario.sh)
+# Endpoint scenario outputs (device/pi_scenario.sh)
 runs/
 
 # Built book (mdbook build book)

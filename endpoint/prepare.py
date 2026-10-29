@@ -1,4 +1,4 @@
-"""Build-machine source setup. No Python is installed on the gate."""
+"""Build-machine source setup. No Python is installed on the endpoint."""
 import hashlib
 import re
 import subprocess
@@ -13,7 +13,7 @@ def git(dest, *args):
 
 
 def main():
-    sources = tomllib.loads((ROOT / "gate/sources.toml").read_text())
+    sources = tomllib.loads((ROOT / "endpoint/sources.toml").read_text())
     for name, spec in sources.items():
         rev, url = spec["rev"], spec["git"]
         if not re.fullmatch(r"[0-9a-f]{40}", rev):

@@ -2,4 +2,4 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export CARGO_HOME="$ROOT/.deps/cargo"
-python3 "$ROOT/gate/prepare.py"
+python3 "$ROOT/endpoint/prepare.py"

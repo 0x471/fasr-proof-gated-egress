@@ -1,10 +1,10 @@
 # Repository map
 
-## The gate (`pge/`)
+## The endpoint (`pge/`)
 
 | File | What it does |
 |---|---|
-| `pge/service.py` | The gate service: one approved model, at most one answer per question, three release rules (arrival order by default, immediate as in v0, fixed time); replies are the proven output or one fixed error; logs use fixed words only |
+| `pge/service.py` | The endpoint service: one approved model, at most one answer per question, three release rules (arrival order by default, immediate as in v0, fixed time); replies are the proven output or one fixed error; logs use fixed words only |
 | `pge/protocol.py` | The message format: fixed-size binary messages for the approved model, parsed strictly |
 | `pge/binding.py` | Encodes the question exactly as EZKL does, checks the server's output values, decodes proven outputs |
 | `pge/bundle.py` | Loads the model's files only if each matches its pinned hash |
@@ -20,7 +20,7 @@
 |---|---|
 | `docs/THREAT_MODEL.md` | Assets, attackers, trust boundaries, assumptions, attack surface, side channels and their status, the MITRE ATLAS mapping |
 | `docs/ATTACKS.md` | Every catalogued scenario, its result and its evidence |
-| `docs/SERVICE_SPEC.md` | The gate service's exact behaviour |
+| `docs/SERVICE_SPEC.md` | The endpoint service's exact behaviour |
 | `docs/BINDING_SPEC.md` | The request-binding rules, pitfalls and test vectors |
 | `docs/EXPERIMENT_PROTOCOL.md` | The spin repeat's protocol, written before the data |
 | `docs/results/` | Complete analysis output for registered experiments |
@@ -43,7 +43,7 @@
 | File | What it does |
 |---|---|
 | `device/verify_on_pi.sh`, `device/check_verifier.sh` | Copy the pinned model to the Pi and check accept and reject cases with the real tool, timed |
-| `device/pi_scenario.sh` | One experiment: the gate on the Pi, the server and observer on this machine |
+| `device/pi_scenario.sh` | One experiment: the endpoint on the Pi, the server and observer on this machine |
 | `device/pi_matrix.sh` | Every release rule against every signalling method |
 | `device/verify_cost.py` | What one check costs on the Pi, and how reliable each memory limit is |
 | `device/measure.sh` | Snapshot of the device's attack surface: packages, services, processes, open ports, file hashes |

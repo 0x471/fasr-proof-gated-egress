@@ -33,7 +33,7 @@ impl Cap {
     }
 }
 
-// Results the server can cause; "halted" and "capped" are the gate's own.
+// Results the server can cause; "halted" and "capped" are the endpoint's own.
 const COUNTED: [&str; 5] = ["reject", "error", "deadline", "disconnect", "no_server"];
 
 #[derive(Clone, Copy, Debug)]

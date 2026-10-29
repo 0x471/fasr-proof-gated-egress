@@ -1,4 +1,4 @@
-"""The Rust gate keeps serving through resource errors, and releases fixed answers on time."""
+"""The Rust endpoint keeps serving through resource errors, and releases fixed answers on time."""
 import asyncio
 import json
 import os
@@ -13,7 +13,7 @@ import pytest
 
 from conftest import ROOT, TINY, TINY_X
 from pge.protocol import Wire, frame, read_frame
-from test_gate_rust import ezkl, free_port, rust_bin  # noqa: F401
+from test_endpoint_rust import ezkl, free_port, rust_bin  # noqa: F401
 from test_service import FakeProver
 from prover.server import Server
 
@@ -24,7 +24,7 @@ async def start(binary, bundle, work, extra=(), nofile=None):
         shutil.copy(source, work / name)
     server = Server(FakeProver(bundle.spec))
     upstream = await asyncio.start_server(server.handle, "127.0.0.1", 0)
-    port, logpath = free_port(), work / "gate.log"
+    port, logpath = free_port(), work / "endpoint.log"
     args = [str(binary), "--listen", f"127.0.0.1:{port}", "--server", f"127.0.0.1:{upstream.sockets[0].getsockname()[1]}",
             "--bundle", str(work), "--pins", str(ROOT / "device/tiny.sha256"), "--domain", str(TINY / "domain.json"),
             "--proof-bytes", "3072", "--log", str(logpath), *extra]
@@ -51,7 +51,7 @@ async def stop(proc, upstream, server):
 
 
 async def log_records(logpath, done, timeout=10):
-    """The gate's log records once done(records) holds, reading only complete lines.
+    """The endpoint's log records once done(records) holds, reading only complete lines.
 
     Getting a reply doesn't mean its log record has been written yet."""
     end = time.monotonic() + timeout
@@ -79,19 +79,19 @@ async def ask(port, wire, cid=1, timeout=10):
     return reply, took
 
 
-def test_running_out_of_descriptors_does_not_stop_the_gate(rust_bin, tiny_bundle, tmp_path):  # noqa: F811
+def test_running_out_of_descriptors_does_not_stop_the_endpoint(rust_bin, tiny_bundle, tmp_path):  # noqa: F811
     async def go():
         proc, port, logpath, upstream, server = await start(rust_bin, tiny_bundle, tmp_path / "rs", nofile=24)
         wire, held = Wire.for_spec(tiny_bundle.spec), []
         try:
-            # More connections than the gate has descriptors for: accept() starts failing.
+            # More connections than the endpoint has descriptors for: accept() starts failing.
             for _ in range(40):
                 try:
                     held.append((await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), 2))[1])
                 except (OSError, asyncio.TimeoutError):
                     break
             await asyncio.sleep(0.5)
-            assert proc.returncode is None, "gate exited when accept() failed"
+            assert proc.returncode is None, "endpoint exited when accept() failed"
             for w in held:
                 w.close()
             await asyncio.sleep(1.5)
@@ -120,9 +120,9 @@ def test_requests_on_open_connections_are_answered_while_descriptors_run_out(rus
             writer.write(frame(wire.encode_request(1, [TINY_X])))
             await writer.drain()
             data = await asyncio.wait_for(read_frame(reader, 65536), 15)
-            assert data is not None, "connection closed without a reply: the gate exited"
+            assert data is not None, "connection closed without a reply: the endpoint exited"
             assert wire.parse_reply(data)["id"] == 1
-            assert proc.returncode is None, "gate exited under descriptor pressure"
+            assert proc.returncode is None, "endpoint exited under descriptor pressure"
         finally:
             for w in held:
                 w.close()
@@ -140,7 +140,7 @@ def cpu_seconds(pid):
     return total + (int(days) * 86400 if days else 0)
 
 
-def test_a_client_that_never_reads_does_not_spin_the_gate(rust_bin, tiny_bundle, tmp_path):  # noqa: F811
+def test_a_client_that_never_reads_does_not_spin_the_endpoint(rust_bin, tiny_bundle, tmp_path):  # noqa: F811
     async def go():
         extra = ["--idle", "1", "--deadline", "1"]
         proc, port, logpath, upstream, server = await start(rust_bin, tiny_bundle, tmp_path / "rs", extra)
@@ -151,8 +151,8 @@ def test_a_client_that_never_reads_does_not_spin_the_gate(rust_bin, tiny_bundle,
         sock.setblocking(False)
         bad = frame(wire.encode_request(1, [[1e30, 0.0, 0.0, 0.0]]))
         try:
-            # Requests the gate answers at once with bad_request; the replies are never read,
-            # so the gate's output buffer for this client fills and it stops reading.
+            # Requests the endpoint answers at once with bad_request; the replies are never read,
+            # so the endpoint's output buffer for this client fills and it stops reading.
             cid, blocked_since = 1, None
             while cid < 40000:
                 try:
@@ -171,8 +171,8 @@ def test_a_client_that_never_reads_does_not_spin_the_gate(rust_bin, tiny_bundle,
             await asyncio.sleep(3)
             used = cpu_seconds(proc.pid) - before
             assert proc.returncode is None
-            assert used < 0.5, f"gate used {used:.2f} s of CPU in 3 s with an unread client"
-            # The gate gives up on the client after the idle time plus the drain time.
+            assert used < 0.5, f"endpoint used {used:.2f} s of CPU in 3 s with an unread client"
+            # The endpoint gives up on the client after the idle time plus the drain time.
             closed = False
             for _ in range(100):
                 try:
@@ -183,7 +183,7 @@ def test_a_client_that_never_reads_does_not_spin_the_gate(rust_bin, tiny_bundle,
                     closed = True
                     break
                 await asyncio.sleep(0.05)
-            assert closed, "the gate never closed the client that stopped reading"
+            assert closed, "the endpoint never closed the client that stopped reading"
             reply, _ = await ask(port, wire)
             assert reply["ok"]
         finally:

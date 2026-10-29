@@ -1,4 +1,4 @@
-"""Laptop AI server for the gate: prove each request with EZKL, honestly or not.
+"""Laptop AI server for the endpoint: prove each request with EZKL, honestly or not.
 
 The device connects here. Each forwarded request (seq, x) is proved with the pinned tiny
 bundle and answered with (seq, outputs, proof) in the binary format (docs/SERVICE_SPEC.md). --mode makes the server
@@ -17,7 +17,7 @@ misbehave, for the service tests and as the start of the W4 malicious-prover har
   order_bits       hide --bits in the order of each --batch answers: floor(log2(batch!)) bits
                    per batch, as the index of a permutation
   fail_position    hide --bits in which answer of each --batch fails (tampered output, so the
-                   gate rejects it): log2(batch) bits per batch, one failure per batch
+                   endpoint rejects it): log2(batch) bits per batch, one failure per batch
 
 Usage: python prover/server.py --listen 127.0.0.1:8701 [--mode honest]
 """

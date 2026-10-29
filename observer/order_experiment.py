@@ -1,4 +1,4 @@
-"""Ordering channel: the real EZKL prover in order_bits mode against the gate on localhost, v0 vs v1.
+"""Ordering channel: the real EZKL prover in order_bits mode against the endpoint on localhost, v0 vs v1.
 
 Run from the repo root: python observer/order_experiment.py. Prints one JSON line per (k, release).
 """
@@ -9,7 +9,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "prover"), str(ROOT / "observer"), str(ROO
 import ezkl
 from conftest import TINY, TINY_PINS, TINY_X
 from pge.bundle import Bundle
-from pge.service import Gate, Policy
+from pge.service import Endpoint, Policy
 from server import Prover, Server, bits_per_batch
 from client import trace_batches, decode_order_bits
 
@@ -24,11 +24,11 @@ def verify(data, timeout):
 
 async def run(release, k, batches, bits):
     srv = Server(prover, mode="order_bits", bits=bits, batch=k)
-    gate = Gate(spec=bundle.spec, verifier=verify, policy=Policy(deadline=30, release=release), log=lambda r: None)
+    endpoint = Endpoint(spec=bundle.spec, verifier=verify, policy=Policy(deadline=30, release=release), log=lambda r: None)
     s1 = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
-    s2 = await asyncio.start_server(gate.serve_client, "127.0.0.1", 0)
-    link = asyncio.create_task(gate.link("127.0.0.1", s1.sockets[0].getsockname()[1]))
-    while gate._server is None:
+    s2 = await asyncio.start_server(endpoint.serve_client, "127.0.0.1", 0)
+    link = asyncio.create_task(endpoint.link("127.0.0.1", s1.sockets[0].getsockname()[1]))
+    while endpoint._server is None:
         await asyncio.sleep(0.01)
     t0 = time.monotonic()
     rows = await trace_batches("127.0.0.1", s2.sockets[0].getsockname()[1], [[TINY_X]] * (k * batches), k)

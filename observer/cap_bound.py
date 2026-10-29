@@ -1,13 +1,13 @@
 """Upper bound on what the cap-processed status sequence can carry under the failure cap.
 
 What it counts: the ok/unavailable status of the replies to n admitted requests, in the order
-they leave the gate, starting from an empty cap. Under the cap (observer/cap_model.py, the
-reference the Rust gate's cap is tested against) only some of the 2^n such sequences can occur,
+they leave the endpoint, starting from an empty cap. Under the cap (observer/cap_model.py, the
+reference the Rust endpoint's cap is tested against) only some of the 2^n such sequences can occur,
 whatever the server does; log2 of their number bounds the bits that sequence can carry. Counted
 exactly by dynamic programming over the cap's states.
 
 What it doesn't count: replies that never pass the cap (busy and halted answers at admission),
-when replies leave, ids and interleaving across clients, missing replies and the gate's logs.
+when replies leave, ids and interleaving across clients, missing replies and the endpoint's logs.
 Under fixed release with halt_after off, busy answers don't depend on the server (every admitted
 request holds its slot until its fixed release time); under arrival release the server also
 controls timing and, by answering slowly, which later requests are busy.

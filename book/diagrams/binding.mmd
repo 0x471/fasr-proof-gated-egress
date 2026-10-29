@@ -1,7 +1,7 @@
 flowchart TD
-    X["Question x from the user"] --> E["Gate encodes x itself<br/>F32, times 2^13, round half away from zero"]
-    O["Server's claimed outputs<br/>3 field elements"] --> K["Gate checks each is canonical<br/>32 bytes little-endian, below q"]
-    E --> I["Public instances<br/>gate's inputs, then server's outputs"]
+    X["Question x from the user"] --> E["Endpoint encodes x itself<br/>F32, times 2^13, round half away from zero"]
+    O["Server's claimed outputs<br/>3 field elements"] --> K["Endpoint checks each is canonical<br/>32 bytes little-endian, below q"]
+    E --> I["Public instances<br/>endpoint's inputs, then server's outputs"]
     K --> I
     I --> V{"EZKL verify<br/>pinned vk, settings, SRS"}
     PR["Server's proof<br/>exactly 3,072 bytes"] --> V

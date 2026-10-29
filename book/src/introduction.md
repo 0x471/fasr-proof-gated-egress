@@ -13,13 +13,13 @@ The most valuable thing an AI lab owns is its model's weights. A hacked server, 
 
 ```text
                           +---------+
-  user  ---- question --> |  gate   | ---- question ---->  AI server
+  user  ---- question --> |  endpoint   | ---- question ---->  AI server
                           |  (Pi)   |                     (may be hacked)
         <--- answer ----- |         | <--- answer + proof
           or "unavailable"+---------+
 ```
 
-We call the Pi running the checking software **the gate**.
+We call the Pi running the checking software **the endpoint**.
 
 ## What we found
 
@@ -34,8 +34,8 @@ These are results for one tiny, deterministic test model and the encoders we tri
 ## Where to start
 
 - **5 minutes:** this page, then [What a hacked server can still leak](leakage.md).
-- **The whole system with diagrams:** [How the gate works](tour.md).
-- **Assessing the security:** [How hard the gate is to attack](hardening.md), then the [Attack catalogue](attacks.md) and [Threat model](threat-model.md).
+- **The whole system with diagrams:** [How the endpoint works](tour.md).
+- **Assessing the security:** [How hard the endpoint is to attack](hardening.md), then the [Attack catalogue](attacks.md) and [Threat model](threat-model.md).
 - **Checking the numbers:** [Measurements](results.md) and [Reproduce the results](reproduce.md).
 - **New to the terms:** the [Glossary](glossary.md).
 

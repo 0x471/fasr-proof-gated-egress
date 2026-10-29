@@ -1,5 +1,5 @@
 flowchart TD
-    G["Gate service"] -->|"argv, minimal env"| L["Launcher<br/>fresh python3 -I -S, one thread"]
+    G["Endpoint service"] -->|"argv, minimal env"| L["Launcher<br/>fresh python3 -I -S, one thread"]
     L -->|"set rlimits, restore SIGPIPE and SIGXFSZ, exec"| C["EZKL CLI verify"]
     C -->|"stdout and stderr, capped at 64 KiB"| G
     W["Watchdog: deadline"] -->|"SIGKILL the whole process group"| C

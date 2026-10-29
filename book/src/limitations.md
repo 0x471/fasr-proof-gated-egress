@@ -1,15 +1,15 @@
 # Limitations and open questions
 
 > **In short**
-> - Not built yet: the stripped v1 system running the gate, secure boot, signed updates, and a defence for the failure channel.
+> - Not built yet: the stripped v1 system running the endpoint, secure boot, signed updates, and a defence for the failure channel.
 > - Not measured yet: a real upper bound on leakage, several users at once, packet-level signals, the speed-versus-leakage trade-off.
-> - The results assume all of the server's traffic goes through the gate, one approved model, and a sound proof system.
+> - The results assume all of the server's traffic goes through the endpoint, one approved model, and a sound proof system.
 
 ## Not built yet
 
-- **The v1 image.** The v1 software runs on the stock OS. The stripped image (only the gate, two wired ports, read-only system, a separate unprivileged user for the verifier, a log partition) is in progress.
+- **The v1 image.** The v1 software runs on the stock OS. The stripped image (only the endpoint, two wired ports, read-only system, a separate unprivileged user for the verifier, a log partition) is in progress.
 - **v2:** signed, versioned updates with a rollback rule and power-loss-safe installation; secure boot (which permanently writes a key into the board, so it needs a spare board); a hash-chained log sent to a separate collector.
-- **A defence for the failure channel.** No release policy limits it. Capping failures per window bounds what the failure pattern alone can carry: if the observer sees only which of N answers failed and the gate allows at most F, the server can send at most log2(C(N,0) + ... + C(N,F)) bits per window; stopping at the first failure leaves N + 1 outcomes per window, if restarts are controlled. Timing, logs and restarts need their own accounting, and none of this is implemented or measured yet.
+- **A defence for the failure channel.** No release policy limits it. Capping failures per window bounds what the failure pattern alone can carry: if the observer sees only which of N answers failed and the endpoint allows at most F, the server can send at most log2(C(N,0) + ... + C(N,F)) bits per window; stopping at the first failure leaves N + 1 outcomes per window, if restarts are controlled. Timing, logs and restarts need their own accounting, and none of this is implemented or measured yet.
 
 ## Not measured yet
 
@@ -23,7 +23,7 @@
 
 - Every path from the server to the outside goes through the device. On the v0 OS this is not enforced.
 - One pinned model and circuit; the binding rules are specific to EZKL 23.0.5.
-- The verifier binary, the bundle, the domain file and the interpreter are trusted inputs of the image. The verifier is trusted, with its failures contained: if it wrongly said ACCEPT, the gate couldn't tell. The domain file is not among the bundle's pinned hashes; the experiment script checks it against the checkout and records its hash. The gate checks the bundle's hashes at load and before every check; the CLI's download is checked by its digest when it is fetched; the interpreter and the CLI on disk are not re-checked at run time, so they rely on the read-only image.
+- The verifier binary, the bundle, the domain file and the interpreter are trusted inputs of the image. The verifier is trusted, with its failures contained: if it wrongly said ACCEPT, the endpoint couldn't tell. The domain file is not among the bundle's pinned hashes; the experiment script checks it against the checkout and records its hash. The endpoint checks the bundle's hashes at load and before every check; the CLI's download is checked by its digest when it is fetched; the interpreter and the CLI on disk are not re-checked at run time, so they rely on the read-only image.
 - The proof system is sound. Its soundness is out of scope.
 
 ## Out of scope

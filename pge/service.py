@@ -1,4 +1,4 @@
-"""Gate service: forward requests, check every answer's proof, release y or one generic error.
+"""Endpoint service: forward requests, check every answer's proof, release y or one generic error.
 
 See docs/SERVICE_SPEC.md. v1 releases answers in arrival order over fixed-size binary frames
 and logs fixed words only. Policy(release="fixed") sends answers in admission order, each no
@@ -109,7 +109,7 @@ def file_log(path: str | Path) -> Callable[[dict], None]:
 
 
 @dataclass
-class Gate:
+class Endpoint:
     spec: CircuitSpec
     verifier: Verifier
     domain: AffineReluDomain | None = None
@@ -460,7 +460,7 @@ def main(argv: list[str] | None = None) -> None:
     from pge.bundle import Bundle, Pins
     from pge.cli import verify_bytes_with_cli
 
-    ap = argparse.ArgumentParser(description="gate service")
+    ap = argparse.ArgumentParser(description="endpoint service")
     ap.add_argument("--listen", required=True, help="outside address, host:port")
     ap.add_argument("--server", required=True, help="AI server address, host:port")
     ap.add_argument("--bundle", required=True, help="directory with settings.json, vk.key, kzg.srs")
@@ -486,7 +486,7 @@ def main(argv: list[str] | None = None) -> None:
     pins = Pins(settings=sums["settings.json"], vk=sums["vk.key"], srs=sums["kzg.srs"])
     d = Path(a.bundle)
     bundle = Bundle.load(d / "settings.json", d / "vk.key", d / "kzg.srs", pins)
-    gate = Gate(spec=bundle.spec, verifier=lambda data, t: verify_bytes_with_cli(bundle, data, a.cli, t),
+    endpoint = Endpoint(spec=bundle.spec, verifier=lambda data, t: verify_bytes_with_cli(bundle, data, a.cli, t),
                 domain=load_domain(a.domain) if a.domain else None,
                 log=file_log(a.log) if a.log else _stderr_log,
                 policy=Policy(deadline=a.deadline, max_pending=a.max_pending, halt_after=a.halt_after,
@@ -494,9 +494,9 @@ def main(argv: list[str] | None = None) -> None:
 
     async def run() -> None:
         host, port = _addr(a.listen)
-        srv = await asyncio.start_server(gate.serve_client, host, port)
+        srv = await asyncio.start_server(endpoint.serve_client, host, port)
         shost, sport = _addr(a.server)
-        await asyncio.gather(srv.serve_forever(), gate.link(shost, sport))
+        await asyncio.gather(srv.serve_forever(), endpoint.link(shost, sport))
 
     asyncio.run(run())
 

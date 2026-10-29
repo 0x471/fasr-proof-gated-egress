@@ -27,7 +27,7 @@ Toolchain: EZKL's pinned `nightly-2025-12-01` (rustc 1.93.0-nightly). The build 
 ## Not done yet
 
 - Run the aarch64 Linux build on the Pi (built natively in an Ubuntu 24.04 arm64 VM on 16 Oct; passes `check.sh` there). A static (musl) build is not tried.
-- Exit codes are the spike's own: 0 valid, 1 any halo2 error, 2 could not load an input. EZKL's errors don't separate bad data from failed I/O cleanly (see `docs/BINDING_SPEC.md` section 6), so the gate should keep treating anything but 0 and 1 as ERROR, and run the canonical-proof check first.
-- Malformed inputs could make the halo2 code panic; a panic exits with 101, which the gate must treat as ERROR. Not fuzzed.
-- No memory bound on what it loads; the gate bounds the proof size before calling it.
-- Not wired into the gate yet (`pge/cli.py` expects the CLI's log format).
+- Exit codes are the spike's own: 0 valid, 1 any halo2 error, 2 could not load an input. EZKL's errors don't separate bad data from failed I/O cleanly (see `docs/BINDING_SPEC.md` section 6), so the endpoint should keep treating anything but 0 and 1 as ERROR, and run the canonical-proof check first.
+- Malformed inputs could make the halo2 code panic; a panic exits with 101, which the endpoint must treat as ERROR. Not fuzzed.
+- No memory bound on what it loads; the endpoint bounds the proof size before calling it.
+- Not wired into the endpoint yet (`pge/cli.py` expects the CLI's log format).

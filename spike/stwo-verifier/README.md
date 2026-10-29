@@ -2,7 +2,7 @@
 
 Can the device verify S-two (Circle STARK) proofs of Cairo programs, and what does it have to pin to do it safely? Built on StarkWare's stwo-cairo at the commit tagged `sharp-7.4` (`b0b7400`, 17 Jun 2026), stwo `74951f79`, Rust `nightly-2026-01-15`. A branch also named `sharp-7.4` points to a later commit (`9b93cc3`, tagged `sharp-7.4.RC3`, 1 Jul); its Rust verifier crate (`cairo-air`) is identical, so the pin stays on the tag. Which commit SHARP runs in production isn't known to us.
 
-Not on the device yet. The gate still uses EZKL.
+Not on the device yet. The endpoint still uses EZKL.
 
 ## What it checks
 

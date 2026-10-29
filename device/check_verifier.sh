@@ -67,7 +67,7 @@ run_verify() {
   set -e
 }
 
-# One classifier for the gate and this script: pge.cli.classify_cli (exit code, anchored
+# One classifier for the endpoint and this script: pge.cli.classify_cli (exit code, anchored
 # log lines, exactly one "verified" line, at most 64 KiB of output).
 classify() {
   python3 -I - "$RC" verify_out.txt <<'PY'

@@ -1,4 +1,4 @@
-"""The v0 gate against honest and misbehaving servers, over real sockets."""
+"""The v0 endpoint against honest and misbehaving servers, over real sockets."""
 import asyncio
 import json
 import os
@@ -13,7 +13,7 @@ import pytest
 from conftest import ROOT, TINY, TINY_X
 from pge.binding import split_instances
 from pge.protocol import REQUEST, Wire, frame, read_frame
-from pge.service import REASONS, Gate, Policy, file_log, load_domain
+from pge.service import REASONS, Endpoint, Policy, file_log, load_domain
 from pge.verdict import Verdict
 
 sys.path.insert(0, str(ROOT / "prover"))
@@ -70,12 +70,12 @@ class Client:
 
 
 class Stack:
-    def __init__(self, gate, server, tasks, servers):
-        self.gate, self.server, self.tasks, self.servers = gate, server, tasks, servers
+    def __init__(self, endpoint, server, tasks, servers):
+        self.endpoint, self.server, self.tasks, self.servers = endpoint, server, tasks, servers
 
     async def client(self):
         port = self.servers[1].sockets[0].getsockname()[1]
-        return Client(*await asyncio.open_connection("127.0.0.1", port), self.gate.wire)
+        return Client(*await asyncio.open_connection("127.0.0.1", port), self.endpoint.wire)
 
     def results(self):
         return [r["result"] for r in self.records]
@@ -84,19 +84,19 @@ class Stack:
 def run_stack(bundle, verifier, test, *, server=None, policy=Policy(deadline=5), domain=None, link=True):
     async def go():
         records = []
-        gate = Gate(spec=bundle.spec, verifier=verifier, domain=domain, policy=policy, log=records.append)
+        endpoint = Endpoint(spec=bundle.spec, verifier=verifier, domain=domain, policy=policy, log=records.append)
         srv = server or Server(FakeProver(bundle.spec))
         s1 = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
-        s2 = await asyncio.start_server(gate.serve_client, "127.0.0.1", 0)
+        s2 = await asyncio.start_server(endpoint.serve_client, "127.0.0.1", 0)
         tasks = []
         if link:
-            tasks.append(asyncio.create_task(gate.link("127.0.0.1", s1.sockets[0].getsockname()[1])))
+            tasks.append(asyncio.create_task(endpoint.link("127.0.0.1", s1.sockets[0].getsockname()[1])))
             for _ in range(200):
-                if gate._server is not None:
+                if endpoint._server is not None:
                     break
                 await asyncio.sleep(0.01)
-            assert gate._server is not None
-        st = Stack(gate, srv, tasks, (s1, s2))
+            assert endpoint._server is not None
+        st = Stack(endpoint, srv, tasks, (s1, s2))
         st.records = records
         try:
             return await test(st)
@@ -155,10 +155,10 @@ def test_server_violation_fails_pending_and_reconnects(tiny_bundle, verifier):
         assert (await c.recv())["ok"] is False
         assert st.results()[:2] == ["server_violation", "disconnect"]
         for _ in range(300):
-            if st.gate._server is not None:
+            if st.endpoint._server is not None:
                 break
             await asyncio.sleep(0.01)
-        assert st.gate._server is not None
+        assert st.endpoint._server is not None
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "garbage"))
 
 
@@ -179,7 +179,7 @@ def test_late_answer_is_dropped_and_answered_once(tiny_bundle, verifier):
         c.send(1, [TINY_X])
         assert (await c.recv())["ok"] is False
         assert await c.nothing_within(1.5)
-        assert st.gate.counts["stale_answer"] == 1
+        assert st.endpoint.counts["stale_answer"] == 1
         assert st.results() == ["deadline", "stale_answer"]
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "delay", delay=1.2), policy=Policy(deadline=0.5))
 
@@ -190,7 +190,7 @@ def test_duplicate_answer_gives_one_reply(tiny_bundle, verifier):
         c.send(1, [TINY_X])
         assert (await c.recv())["ok"] is True
         assert await c.nothing_within(0.5)
-        assert st.gate.counts["duplicate_answer"] + st.gate.counts["stale_answer"] == 1
+        assert st.endpoint.counts["duplicate_answer"] + st.endpoint.counts["stale_answer"] == 1
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "duplicate"))
 
 
@@ -199,7 +199,7 @@ def test_answer_for_unissued_seq_is_dropped(tiny_bundle, verifier):
         c = await st.client()
         c.send(1, [TINY_X])
         assert (await c.recv())["ok"] is False
-        assert st.gate.counts["stale_answer"] == 1 and "deadline" in st.results()
+        assert st.endpoint.counts["stale_answer"] == 1 and "deadline" in st.results()
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "wrong_seq"), policy=Policy(deadline=1))
 
 
@@ -302,7 +302,7 @@ def test_halt_after_failures(tiny_bundle, verifier):
         for cid in (1, 2):
             c.send(cid, [TINY_X])
             assert (await c.recv())["ok"] is False
-        assert st.gate.halted
+        assert st.endpoint.halted
         c.send(3, [TINY_X])
         assert await c.recv(timeout=0.3) == {"id": 3, "ok": False, "error": "unavailable"}
         assert len(st.server.requests) == 2
@@ -317,7 +317,7 @@ def test_too_many_pending_is_unavailable(tiny_bundle, verifier):
         c.send(2, [TINY_X])
         assert await c.recv(timeout=0.5) == {"id": 2, "ok": False, "error": "unavailable"}
         assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
-        assert st.results() == ["busy", "deadline"] and not st.gate.halted
+        assert st.results() == ["busy", "deadline"] and not st.endpoint.halted
     run_stack(tiny_bundle, verifier, t, server=server(tiny_bundle, "drop"),
               policy=Policy(deadline=1, max_pending=1, halt_after=2))
 
@@ -368,7 +368,7 @@ def test_check_finishing_after_the_deadline_is_dropped(tiny_bundle):
         c.send(1, [TINY_X])
         assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
         assert await c.nothing_within(1.5)
-        assert st.results() == ["deadline"] and st.gate.counts["late_check"] == 1
+        assert st.results() == ["deadline"] and st.endpoint.counts["late_check"] == 1
     run_stack(tiny_bundle, slow, t, policy=Policy(deadline=0.3))
 
 
@@ -403,7 +403,7 @@ def test_real_prover_end_to_end(ezkl, tiny_bundle, verifier, srs_path):
     run_stack(tiny_bundle, verifier, t, server=Server(prover), policy=Policy(deadline=60))
 
 
-def test_cli_verifier_in_the_gate(real_cli_path, tiny_bundle):
+def test_cli_verifier_in_the_endpoint(real_cli_path, tiny_bundle):
     from pge.cli import verify_bytes_with_cli
 
     def verifier(data, timeout):
@@ -490,19 +490,19 @@ def test_broken_log_still_answers(tiny_bundle, verifier):
         raise OSError(28, "No space left on device")
 
     async def go():
-        gate = Gate(spec=tiny_bundle.spec, verifier=verifier, log=bad_log, policy=Policy(deadline=5))
+        endpoint = Endpoint(spec=tiny_bundle.spec, verifier=verifier, log=bad_log, policy=Policy(deadline=5))
         srv = Server(FakeProver(tiny_bundle.spec))
         s1 = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
-        s2 = await asyncio.start_server(gate.serve_client, "127.0.0.1", 0)
-        link = asyncio.create_task(gate.link("127.0.0.1", s1.sockets[0].getsockname()[1]))
-        while gate._server is None:
+        s2 = await asyncio.start_server(endpoint.serve_client, "127.0.0.1", 0)
+        link = asyncio.create_task(endpoint.link("127.0.0.1", s1.sockets[0].getsockname()[1]))
+        while endpoint._server is None:
             await asyncio.sleep(0.01)
-        c = Client(*await asyncio.open_connection("127.0.0.1", s2.sockets[0].getsockname()[1]), gate.wire)
+        c = Client(*await asyncio.open_connection("127.0.0.1", s2.sockets[0].getsockname()[1]), endpoint.wire)
         c.send(1, [TINY_X])
         assert await c.recv() == {"id": 1, "ok": True, "y": Y}
         c.send(2, OTHER_X)
         assert await c.recv() == {"id": 2, "ok": False, "error": "unavailable"}
-        assert gate.counts["log_error"] >= 2 and not gate.pending
+        assert endpoint.counts["log_error"] >= 2 and not endpoint.pending
         link.cancel()
         s1.close()
         s2.close()
@@ -515,7 +515,7 @@ def test_overdue_result_is_not_released_when_the_timer_is_late(tiny_bundle):
         return Verdict.ACCEPT, ""
 
     async def t(st):
-        st.gate._expire = lambda seq: None  # stands in for a deadline timer that runs late
+        st.endpoint._expire = lambda seq: None  # stands in for a deadline timer that runs late
         c = await st.client()
         c.send(1, [TINY_X])
         assert await c.recv() == {"id": 1, "ok": False, "error": "unavailable"}
@@ -538,9 +538,9 @@ def test_half_closed_client_still_gets_its_answers(tiny_bundle, verifier):
 def test_unissued_seq_is_not_logged(tiny_bundle, verifier):
     async def go():
         records = []
-        gate = Gate(spec=tiny_bundle.spec, verifier=verifier, log=records.append)
-        gate.on_answer(1234567890123456, [], b"x")
-        assert records == [{"result": "stale_answer"}] and gate.counts["stale_answer"] == 1
+        endpoint = Endpoint(spec=tiny_bundle.spec, verifier=verifier, log=records.append)
+        endpoint.on_answer(1234567890123456, [], b"x")
+        assert records == [{"result": "stale_answer"}] and endpoint.counts["stale_answer"] == 1
     asyncio.run(go())
 
 
@@ -605,7 +605,7 @@ def test_failures_are_cumulative(tiny_bundle, verifier):
         for cid, x, ok in ((1, OTHER_X, False), (2, [TINY_X], True), (3, OTHER_X, False)):
             c.send(cid, x)
             assert (await c.recv())["ok"] is ok
-        assert st.gate.halted
+        assert st.endpoint.halted
     run_stack(tiny_bundle, verifier, t, policy=Policy(deadline=5, halt_after=2))
 
 
@@ -626,7 +626,7 @@ def test_halt_answers_pending_requests_at_once(tiny_bundle):
         second = await c.recv()
         assert first == {"id": 1, "ok": False, "error": "unavailable"}
         assert second == {"id": 2, "ok": False, "error": "unavailable"} and time.monotonic() - start < 0.5
-        assert st.gate.halted and "accept" not in st.results() and "halted" in st.results()
+        assert st.endpoint.halted and "accept" not in st.results() and "halted" in st.results()
     run_stack(tiny_bundle, verify, t, policy=Policy(deadline=5, halt_after=1))
 
 
@@ -730,13 +730,13 @@ def test_proof_length_reason_hides_the_length(tiny_bundle, verifier):
 
 def test_unknown_reason_is_logged_as_other(tiny_bundle, verifier):
     records = []
-    gate = Gate(spec=tiny_bundle.spec, verifier=verifier, log=records.append)
-    gate._record("error", None, "server said 0xdeadbeef")
+    endpoint = Endpoint(spec=tiny_bundle.spec, verifier=verifier, log=records.append)
+    endpoint._record("error", None, "server said 0xdeadbeef")
     assert records == [{"result": "error", "reason": "other"}]
 
 
 def test_file_log_appends_lines(tmp_path):
-    path = tmp_path / "gate.log"
+    path = tmp_path / "endpoint.log"
     log = file_log(path)
     log({"result": "accept", "seq": 1})
     log({"result": "reject", "reason": "proof"})
@@ -829,18 +829,18 @@ class _NullServer:
         pass
 
 
-def _direct_gate(bundle, verifier, **policy):
+def _direct_endpoint(bundle, verifier, **policy):
     records = []
     proof = json.loads((TINY / "proof.json").read_text())
-    gate = Gate(spec=bundle.spec, verifier=verifier, log=records.append,
+    endpoint = Endpoint(spec=bundle.spec, verifier=verifier, log=records.append,
                 policy=Policy(proof_bytes=len(proof["proof"]), **policy))
-    gate._server = _NullServer()
-    return gate, records, split_instances(bundle.spec, proof["instances"])[1], bytes(proof["proof"])
+    endpoint._server = _NullServer()
+    return endpoint, records, split_instances(bundle.spec, proof["instances"])[1], bytes(proof["proof"])
 
 
-async def _settle(gate):
-    while gate._tasks:
-        await asyncio.gather(*list(gate._tasks), return_exceptions=True)
+async def _settle(endpoint):
+    while endpoint._tasks:
+        await asyncio.gather(*list(endpoint._tasks), return_exceptions=True)
 
 
 def _accept(data, timeout):
@@ -849,77 +849,77 @@ def _accept(data, timeout):
 
 def test_halt_revokes_held_successes(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=5, halt_after=1)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=5, halt_after=1)
         got = []
         for cid in (1, 2, 3):
-            gate.submit(cid, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
-        gate.on_answer(2, outputs, raw)
-        await _settle(gate)
-        assert got == [] and gate._held
-        gate.on_answer(3, outputs, b"\x00")
-        await _settle(gate)
+            endpoint.submit(cid, [TINY_X], lambda m: got.append(endpoint.wire.parse_reply(m)))
+        endpoint.on_answer(2, outputs, raw)
+        await _settle(endpoint)
+        assert got == [] and endpoint._held
+        endpoint.on_answer(3, outputs, b"\x00")
+        await _settle(endpoint)
         assert [m["ok"] for m in got] == [False, False, False]
-        assert gate.halted and "accept" not in [r["result"] for r in records]
+        assert endpoint.halted and "accept" not in [r["result"] for r in records]
     asyncio.run(go())
 
 
 def test_held_success_past_its_deadline_is_not_released(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.2)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.2)
         got = []
         for cid in (1, 2):
-            gate.submit(cid, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
-        gate.on_answer(2, outputs, raw)
-        await _settle(gate)
+            endpoint.submit(cid, [TINY_X], lambda m: got.append(endpoint.wire.parse_reply(m)))
+        endpoint.on_answer(2, outputs, raw)
+        await _settle(endpoint)
         time.sleep(0.4)  # the loop stalls, so the deadline timer for seq 1 runs late
         await asyncio.sleep(0.05)
         assert [m["ok"] for m in got] == [False, False]
         assert [(r["result"], r.get("reason")) for r in records] == [("deadline", None), ("deadline", "held")]
-        assert gate.failures == 2
+        assert endpoint.failures == 2
     asyncio.run(go())
 
 
 def test_held_answers_count_towards_max_pending(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=5, max_pending=2)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=5, max_pending=2)
         got = []
         for cid in (1, 2):
-            gate.submit(cid, [TINY_X], got.append)
-        gate.on_answer(2, outputs, b"\x00")
-        await _settle(gate)
-        assert len(gate.pending) == 1 and len(gate._held) == 1
-        gate.submit(3, [TINY_X], got.append)
-        assert gate.seq == 2 and [r["result"] for r in records] == ["busy"]
+            endpoint.submit(cid, [TINY_X], got.append)
+        endpoint.on_answer(2, outputs, b"\x00")
+        await _settle(endpoint)
+        assert len(endpoint.pending) == 1 and len(endpoint._held) == 1
+        endpoint.submit(3, [TINY_X], got.append)
+        assert endpoint.seq == 2 and [r["result"] for r in records] == ["busy"]
     asyncio.run(go())
 
 
 def test_held_answers_go_to_their_own_clients(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=5)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=5)
         a, b = [], []
-        gate.submit(10, [TINY_X], lambda m: a.append(gate.wire.parse_reply(m)))
-        gate.submit(20, [TINY_X], lambda m: b.append(gate.wire.parse_reply(m)))
-        gate.on_answer(2, outputs, raw)
-        await _settle(gate)
-        gate.on_answer(1, outputs, raw)
-        await _settle(gate)
+        endpoint.submit(10, [TINY_X], lambda m: a.append(endpoint.wire.parse_reply(m)))
+        endpoint.submit(20, [TINY_X], lambda m: b.append(endpoint.wire.parse_reply(m)))
+        endpoint.on_answer(2, outputs, raw)
+        await _settle(endpoint)
+        endpoint.on_answer(1, outputs, raw)
+        await _settle(endpoint)
         assert a == [{"id": 10, "ok": True, "y": Y}] and b == [{"id": 20, "ok": True, "y": Y}]
-        assert not gate.pending and not gate._held
+        assert not endpoint.pending and not endpoint._held
         assert [r["seq"] for r in records] == [1, 2]
     asyncio.run(go())
 
 
 def test_halt_on_the_earliest_request_revokes_later_held_successes(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=5, halt_after=1)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=5, halt_after=1)
         got = []
         for cid in (1, 2):
-            gate.submit(cid, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
-        gate.on_answer(2, outputs, raw)
-        await _settle(gate)
-        gate.on_answer(1, outputs, b"\x00")
-        await _settle(gate)
-        assert [m["ok"] for m in got] == [False, False] and gate.halted
+            endpoint.submit(cid, [TINY_X], lambda m: got.append(endpoint.wire.parse_reply(m)))
+        endpoint.on_answer(2, outputs, raw)
+        await _settle(endpoint)
+        endpoint.on_answer(1, outputs, b"\x00")
+        await _settle(endpoint)
+        assert [m["ok"] for m in got] == [False, False] and endpoint.halted
     asyncio.run(go())
 
 
@@ -959,34 +959,34 @@ def test_order_bits_leak_only_without_arrival_order(tiny_bundle, verifier, relea
 
 def test_fixed_release_sends_every_answer_at_its_deadline(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, release="fixed")
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.3, release="fixed")
         loop = asyncio.get_running_loop()
         sent = []
         t0 = time.monotonic()
         for cid in (1, 2, 3, 4):
-            gate.submit(cid, [TINY_X], lambda m: sent.append((gate.wire.parse_reply(m), time.monotonic() - t0)))
-        gate.on_answer(2, outputs, raw)
-        gate.on_answer(3, outputs, b"\x00")
-        loop.call_later(0.15, gate.on_answer, 4, outputs, raw)
+            endpoint.submit(cid, [TINY_X], lambda m: sent.append((endpoint.wire.parse_reply(m), time.monotonic() - t0)))
+        endpoint.on_answer(2, outputs, raw)
+        endpoint.on_answer(3, outputs, b"\x00")
+        loop.call_later(0.15, endpoint.on_answer, 4, outputs, raw)
         await asyncio.sleep(0.5)
         assert [(m["id"], m["ok"]) for m, _ in sent] == [(1, False), (2, True), (3, False), (4, True)]
         assert all(0.3 <= t < 0.36 for _, t in sent)
         assert [r["result"] for r in records] == ["deadline", "accept", "reject", "accept"]
-        assert not gate.pending and not gate._held
+        assert not endpoint.pending and not endpoint._held
     asyncio.run(go())
 
 
 def test_fixed_release_revokes_held_successes_on_halt(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, halt_after=1, release="fixed")
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.3, halt_after=1, release="fixed")
         got = []
         for cid in (1, 2):
-            gate.submit(cid, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
-        gate.on_answer(1, outputs, raw)
-        await _settle(gate)
-        gate.on_answer(2, outputs, b"\x00")
+            endpoint.submit(cid, [TINY_X], lambda m: got.append(endpoint.wire.parse_reply(m)))
+        endpoint.on_answer(1, outputs, raw)
+        await _settle(endpoint)
+        endpoint.on_answer(2, outputs, b"\x00")
         await asyncio.sleep(0.4)
-        assert [m["ok"] for m in got] == [False, False] and gate.halted
+        assert [m["ok"] for m in got] == [False, False] and endpoint.halted
     asyncio.run(go())
 
 
@@ -1022,13 +1022,13 @@ def test_failure_position_leaks_under_every_release_policy(tiny_bundle, verifier
 
 def test_fixed_release_with_spin_never_releases_early(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, release="fixed", spin=0.02)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.3, release="fixed", spin=0.02)
         sent = []
         t0 = time.monotonic()
         for cid in (1, 2, 3):
-            gate.submit(cid, [TINY_X], lambda m: sent.append((gate.wire.parse_reply(m), time.monotonic() - t0)))
-        gate.on_answer(1, outputs, raw)
-        gate.on_answer(2, outputs, b"\x00")
+            endpoint.submit(cid, [TINY_X], lambda m: sent.append((endpoint.wire.parse_reply(m), time.monotonic() - t0)))
+        endpoint.on_answer(1, outputs, raw)
+        endpoint.on_answer(2, outputs, b"\x00")
         await asyncio.sleep(0.45)
         assert [(m["id"], m["ok"]) for m, _ in sent] == [(1, True), (2, False), (3, False)]
         # Never early is the property; the upper bound only catches a release that never spins.
@@ -1047,12 +1047,12 @@ def test_bad_spin_is_refused(spin):
 def test_fixed_release_keeps_admission_order_whatever_the_server_does(tiny_bundle, spin, sabotaged):
     # Found by review: with spin, a later decided answer used to overtake an earlier silent one.
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.1, release="fixed", spin=spin)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.1, release="fixed", spin=spin)
         order = []
-        gate.submit(1, [TINY_X], lambda m: order.append(gate.wire.parse_reply(m)["id"]))
+        endpoint.submit(1, [TINY_X], lambda m: order.append(endpoint.wire.parse_reply(m)["id"]))
         await asyncio.sleep(0.001)
-        gate.submit(2, [TINY_X], lambda m: order.append(gate.wire.parse_reply(m)["id"]))
-        gate.on_answer(sabotaged, outputs, b"\x00")
+        endpoint.submit(2, [TINY_X], lambda m: order.append(endpoint.wire.parse_reply(m)["id"]))
+        endpoint.on_answer(sabotaged, outputs, b"\x00")
         await asyncio.sleep(0.2)
         assert order == [1, 2]
     asyncio.run(go())
@@ -1060,7 +1060,7 @@ def test_fixed_release_keeps_admission_order_whatever_the_server_does(tiny_bundl
 
 def test_fixed_release_with_spin_wakes_early(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, release="fixed", spin=0.02)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.3, release="fixed", spin=0.02)
         loop = asyncio.get_running_loop()
         delays = []
         real = loop.call_later
@@ -1070,9 +1070,9 @@ def test_fixed_release_with_spin_wakes_early(tiny_bundle):
                 delays.append(delay)
             return real(delay, cb, *args, **kw)
         loop.call_later = spy
-        gate.submit(1, [TINY_X], lambda m: None)
-        gate.on_answer(1, outputs, raw)
-        await _settle(gate)
+        endpoint.submit(1, [TINY_X], lambda m: None)
+        endpoint.on_answer(1, outputs, raw)
+        await _settle(endpoint)
         await asyncio.sleep(0.4)
         assert delays and 0.25 < delays[0] < 0.285
     asyncio.run(go())
@@ -1080,30 +1080,30 @@ def test_fixed_release_with_spin_wakes_early(tiny_bundle):
 
 def test_fixed_release_answers_go_to_their_own_clients(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.2, release="fixed", spin=0.005)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.2, release="fixed", spin=0.005)
         a, b = [], []
-        gate.submit(10, [TINY_X], lambda m: a.append(gate.wire.parse_reply(m)))
-        gate.submit(20, [TINY_X], lambda m: b.append(gate.wire.parse_reply(m)))
-        gate.on_answer(2, outputs, raw)
-        gate.on_answer(1, outputs, b"\x00")
+        endpoint.submit(10, [TINY_X], lambda m: a.append(endpoint.wire.parse_reply(m)))
+        endpoint.submit(20, [TINY_X], lambda m: b.append(endpoint.wire.parse_reply(m)))
+        endpoint.on_answer(2, outputs, raw)
+        endpoint.on_answer(1, outputs, b"\x00")
         await asyncio.sleep(0.35)
         assert [m["id"] for m in a] == [10] and a[0]["ok"] is False
         assert [m["id"] for m in b] == [20] and b[0]["ok"] is True
-        assert not gate.pending and not gate._held
+        assert not endpoint.pending and not endpoint._held
     asyncio.run(go())
 
 
 def test_spin_never_blocks_the_loop_for_long(tiny_bundle):
     # Many answers due a few ms apart: each busy-wait is bounded by spin, and the loop yields between them.
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.2, release="fixed", spin=0.02,
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.2, release="fixed", spin=0.02,
                                                    max_pending=64)
         for cid in range(1, 21):
-            gate.submit(cid, [TINY_X], lambda m: None)
-            gate.on_answer(cid, outputs, b"\x00")
+            endpoint.submit(cid, [TINY_X], lambda m: None)
+            endpoint.on_answer(cid, outputs, b"\x00")
             await asyncio.sleep(0.003)
         gaps, last = [], time.monotonic()
-        while gate._held or gate.pending:
+        while endpoint._held or endpoint.pending:
             await asyncio.sleep(0)
             now = time.monotonic()
             gaps.append(now - last)
@@ -1117,22 +1117,22 @@ def test_failing_many_answers_at_once_never_spins_for_long(tiny_bundle, how):
     # Found by review: a disconnect or halt failed every pending request in one callback,
     # and each release pumped and spun again, so the loop blocked for the sum of the gaps.
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.1, release="fixed", spin=0.005,
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.1, release="fixed", spin=0.005,
                                                    max_pending=64, halt_after=1 if how == "halt" else None)
         for cid in range(1, 21):
-            gate.submit(cid, [TINY_X], lambda m: None)
+            endpoint.submit(cid, [TINY_X], lambda m: None)
             await asyncio.sleep(0.002)
-        first_due = min(p.due for p in gate.pending.values())
+        first_due = min(p.due for p in endpoint.pending.values())
         await asyncio.sleep(max(0.0, first_due - time.monotonic() - 0.003))
         t0 = time.monotonic()
         if how == "disconnect":
-            gate.fail_all("closed")
+            endpoint.fail_all("closed")
         else:
-            gate.on_answer(20, outputs, b"\x00")
+            endpoint.on_answer(20, outputs, b"\x00")
             await asyncio.sleep(0)
         blocked = time.monotonic() - t0
         gaps, last = [], time.monotonic()
-        while gate._held or gate.pending:
+        while endpoint._held or endpoint.pending:
             await asyncio.sleep(0)
             now = time.monotonic()
             gaps.append(now - last)
@@ -1143,14 +1143,14 @@ def test_failing_many_answers_at_once_never_spins_for_long(tiny_bundle, how):
 
 def test_fixed_release_counts_held_answers_towards_capacity(tiny_bundle):
     async def go():
-        gate, records, outputs, raw = _direct_gate(tiny_bundle, _accept, deadline=0.3, release="fixed", max_pending=2)
+        endpoint, records, outputs, raw = _direct_endpoint(tiny_bundle, _accept, deadline=0.3, release="fixed", max_pending=2)
         got = []
         for cid in (1, 2):
-            gate.submit(cid, [TINY_X], lambda m: None)
-            gate.on_answer(cid, outputs, raw)
-        await _settle(gate)
-        assert not gate.pending and len(gate._held) == 2
-        gate.submit(3, [TINY_X], lambda m: got.append(gate.wire.parse_reply(m)))
+            endpoint.submit(cid, [TINY_X], lambda m: None)
+            endpoint.on_answer(cid, outputs, raw)
+        await _settle(endpoint)
+        assert not endpoint.pending and len(endpoint._held) == 2
+        endpoint.submit(3, [TINY_X], lambda m: got.append(endpoint.wire.parse_reply(m)))
         assert got and got[0]["ok"] is False and records[-1]["result"] == "busy"
         await asyncio.sleep(0.4)
     asyncio.run(go())
@@ -1182,7 +1182,7 @@ def test_order_across_connections(tiny_bundle, verifier, release, leaked):
               policy=Policy(deadline=1.0, release=release))
 
 
-async def _stub_gate(order, withhold=(), when=3):
+async def _stub_endpoint(order, withhold=(), when=3):
     # Once `when` clients have asked in a round, answers them in `order`, 5 ms apart; later
     # clients get their answer on arrival. Withheld clients are never answered.
     wire, conns, got = Wire((4,), (3,)), [], {}
@@ -1208,7 +1208,7 @@ def test_trace_clients_reports_the_order_answers_arrived():
 
     async def go():
         # Clients 1 then 0 are answered while client 2 hasn't asked yet.
-        srv = await _stub_gate([1, 0], when=2)
+        srv = await _stub_endpoint([1, 0], when=2)
         port = srv.sockets[0].getsockname()[1]
         rows = await trace_clients("127.0.0.1", port, [TINY_X], 3, 2, gap_ms=40)
         srv.close()
@@ -1221,7 +1221,7 @@ def test_trace_clients_streams_rows_while_one_client_waits():
     from client import trace_clients
 
     async def go():
-        srv = await _stub_gate([0, 1, 2], withhold={2})
+        srv = await _stub_endpoint([0, 1, 2], withhold={2})
         port = srv.sockets[0].getsockname()[1]
         seen = []
         with pytest.raises(asyncio.TimeoutError):

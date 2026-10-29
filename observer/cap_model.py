@@ -6,7 +6,7 @@ capped ones) may be server-caused failures; one more trips a cooldown in which t
 `cooldown` replies are all unavailable, whatever the server does. A trip also clears the
 history, so the window starts empty after the cooldown. The replies an outsider sees
 then follow the automaton below, which observer/cap_bound.py counts to bound the channel.
-This is the reference model: the gate (gate/core in Rust) must behave exactly like step().
+This is the reference model: the endpoint (endpoint/core in Rust) must behave exactly like step().
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ State = tuple[tuple[int, ...], int]
 
 START: State = ((), 0)
 
-# Results the server can cause. "halted" and "capped" are the gate's own and don't count.
+# Results the server can cause. "halted" and "capped" are the endpoint's own and don't count.
 COUNTED = frozenset({"reject", "error", "deadline", "disconnect", "no_server"})
 
 

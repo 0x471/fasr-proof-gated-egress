@@ -1,12 +1,12 @@
-"""What one Rust gate check costs on this machine, and that it rejects what it should.
+"""What one Rust endpoint check costs on this machine, and that it rejects what it should.
 
-Runs the gate binary's verifier child (`pge-gate --verify-child`, the process the gate starts for
-every proof) on the pinned tiny proof, with RAYON_NUM_THREADS=1 as the gate sets it and with the
+Runs the endpoint binary's verifier child (`pge-endpoint --verify-child`, the process the endpoint starts for
+every proof) on the pinned tiny proof, with RAYON_NUM_THREADS=1 as the endpoint sets it and with the
 default thread count. Also checks one valid proof, a changed output, a changed input, a garbage
 proof and a truncated job. Uses only the standard library, so it runs on the stock Pi.
 
 Usage from the repo root on the device:
-  python3 -I device/rust_verify_cost.py --bin ~/p01-rust/pge-gate [--bundle bundle] [--runs 20]
+  python3 -I device/rust_verify_cost.py --bin ~/p01-rust/pge-endpoint [--bundle bundle] [--runs 20]
 Prints one JSON line per measurement.
 """
 from __future__ import annotations

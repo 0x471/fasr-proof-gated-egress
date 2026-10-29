@@ -1076,16 +1076,7 @@ name = "pge-core"
 version = "0.1.0"
 
 [[package]]
-name = "pge-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "pge-verify",
- "pge-wire",
-]
-
-[[package]]
-name = "pge-gate"
+name = "pge-endpoint"
 version = "0.1.0"
 dependencies = [
  "libc",
@@ -1093,6 +1084,15 @@ dependencies = [
  "pge-verify",
  "pge-wire",
  "serde_json",
+]
+
+[[package]]
+name = "pge-fuzz"
+version = "0.0.0"
+dependencies = [
+ "libfuzzer-sys",
+ "pge-verify",
+ "pge-wire",
 ]
 
 [[package]]

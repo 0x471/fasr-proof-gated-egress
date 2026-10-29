@@ -8,11 +8,11 @@ This work was supported by ERA's Frontier AI Security Residency (October to Dece
 
 ## The idea
 
-A hacked AI server, or a model acting against its owners, could try to smuggle the model's weights out inside ordinary answers. Put a checkpoint between the server and the outside world: a Raspberry Pi (the **gate**) that checks a proof for every answer and blocks anything that doesn't check out.
+A hacked AI server, or a model acting against its owners, could try to smuggle the model's weights out inside ordinary answers. Put a checkpoint between the server and the outside world: a Raspberry Pi (the **endpoint**) that checks a proof for every answer and blocks anything that doesn't check out.
 
 ```mermaid
 flowchart LR
-    U[User] -->|question| G[Gate: Raspberry Pi]
+    U[User] -->|question| G[Endpoint: Raspberry Pi]
     G -->|question| S[AI server, may be hacked]
     S -->|answer + proof| G
     G -->|proven answer, or one fixed error| U
@@ -23,7 +23,7 @@ A valid proof stops the server from changing **what** an answer says. It doesn't
 ## What we found
 
 <!-- BEGIN findings: copied from book/src/results.md; tests/test_docs.py fails if they differ -->
-| Way to smuggle data out | Basic gate | Best gate so far | What it costs |
+| Way to smuggle data out | Basic endpoint | Best endpoint so far | What it costs |
 |---|---|---|---|
 | Change what an answer says | Blocked by the proof | Blocked | Each check takes about 0.24 s on the Pi |
 | Reorder answers | Leaks | **The ordering code we tried no longer gets through**: answers leave in the order questions arrived | A slow answer delays the ones behind it |
@@ -48,12 +48,12 @@ Measured on a real Raspberry Pi 4 with one client at a time and one tiny test mo
 The write-up is a short book in `book/`. Its pages, readable here on GitHub:
 
 - [Overview](book/src/introduction.md)
-- [How the gate works](book/src/tour.md) (the whole system on one page, with diagrams)
+- [How the endpoint works](book/src/tour.md) (the whole system on one page, with diagrams)
 - [What a hacked server can still leak](book/src/leakage.md)
-- [How hard the gate is to attack](book/src/hardening.md)
+- [How hard the endpoint is to attack](book/src/hardening.md)
 - [Measurements](book/src/results.md)
 - [Limitations and open questions](book/src/limitations.md)
-- Reference: [threat model](docs/THREAT_MODEL.md), [attack catalogue](docs/ATTACKS.md), [gate service spec](docs/SERVICE_SPEC.md), [request binding spec](docs/BINDING_SPEC.md), [reproduce](book/src/reproduce.md), [repository map](book/src/repo-map.md), [glossary](book/src/glossary.md)
+- Reference: [threat model](docs/THREAT_MODEL.md), [attack catalogue](docs/ATTACKS.md), [endpoint service spec](docs/SERVICE_SPEC.md), [request binding spec](docs/BINDING_SPEC.md), [reproduce](book/src/reproduce.md), [repository map](book/src/repo-map.md), [glossary](book/src/glossary.md)
 
 To read it as a website, build it with [mdBook](https://github.com/rust-lang/mdBook) 0.5.4: `mdbook serve book`, then open http://localhost:3000.
 
@@ -65,10 +65,10 @@ uv pip install --python .venv/bin/python "ezkl==23.0.5" onnx numpy pytest
 .venv/bin/python -m pytest -q
 ```
 
-The tests download the proof system's pinned setup file if `prover/artifacts/kzg.srs` isn't present. Running the gate and the Pi experiments: [Reproduce the results](book/src/reproduce.md).
+The tests download the proof system's pinned setup file if `prover/artifacts/kzg.srs` isn't present. Running the endpoint and the Pi experiments: [Reproduce the results](book/src/reproduce.md).
 
 ## Scope
 
-In scope: hardening and measuring the gate, tying each proof to its question, the update path, secure boot, and signals a hacked server controls (timing, order, deliberate failures, packet sizes and headers).
+In scope: hardening and measuring the endpoint, tying each proof to its question, the update path, secure boot, and signals a hacked server controls (timing, order, deliberate failures, packet sizes and headers).
 
 Out of scope: whether the proof system itself is sound, physical attacks on the device (including power or electromagnetic side channels), and what ordinary correct answers reveal about a model.

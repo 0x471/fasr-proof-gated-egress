@@ -1,4 +1,4 @@
-"""What one gate check costs on this machine: CLI threads, the limit trampoline, bundle hashing,
+"""What one endpoint check costs on this machine: CLI threads, the limit trampoline, bundle hashing,
 and how reliably the CLI runs under each address-space limit.
 
 Usage from the repo root on the device (Linux; the memory sweep needs RLIMIT_AS):
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> None:
         status, rc, out = run_bounded(argv_cli, 10, 1 << 16, env=cli._env(), limits=limits)
         assert status == OK and rc == 0, (status, rc, out[-200:])
 
-    def gate():
+    def endpoint():
         v, d = cli.verify_with_cli(bundle, proof, a.cli, 10)
         assert v is Verdict.ACCEPT, d
 
@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> None:
         ("run_bounded, v1 limits", lambda: bounded(cli.cli_limits(10))),
         ("bundle.check", bundle.check),
         ("read + canonical proof", lambda: canonical_proof(read_proof(proof))),
-        ("verify_with_cli (gate path)", gate),
+        ("verify_with_cli (endpoint path)", endpoint),
     ]
     for name, f in rows:
         print(f"{name:32s} median {median_ms(f, a.runs):7.1f} ms (n={a.runs})", flush=True)

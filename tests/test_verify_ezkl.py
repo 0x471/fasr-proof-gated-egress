@@ -82,7 +82,7 @@ def test_scale_only_settings_change_still_verifies(ezkl, tiny_bundle, tmp_path):
 
 
 def test_trailing_proof_bytes_still_verify(ezkl, tiny_bundle, tiny_proof, tmp_path):
-    # Why the gate pins the proof length: EZKL ignores bytes after the proof.
+    # Why the endpoint pins the proof length: EZKL ignores bytes after the proof.
     for pad in ([0], [7, 9, 200], [0] * 32):
         cand = dict(tiny_proof, proof=tiny_proof["proof"] + pad)
         assert _verify(ezkl, tiny_bundle, cand, tmp_path) == Verdict.ACCEPT

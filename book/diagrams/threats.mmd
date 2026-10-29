@@ -3,16 +3,16 @@ flowchart LR
         A1["A1 hacked server"]
         A2["A2 rogue model, patient"]
     end
-    subgraph TRU["The gate: the only trusted part"]
-        GATE["Gate software<br/>pinned bundle, checker"]
+    subgraph TRU["The endpoint: the only trusted part"]
+        ENDPOINT["Endpoint software<br/>pinned bundle, checker"]
     end
     subgraph OUTS["Outside"]
         A3["A3 accomplice reading replies"]
     end
     A4["A4 network attacker<br/>on either link"]
     A5["A5 holder of a signing key<br/>from v2"]
-    A1 --> GATE
-    A2 --> GATE
-    GATE --> A3
-    A4 -.-> GATE
-    A5 -.-> GATE
+    A1 --> ENDPOINT
+    A2 --> ENDPOINT
+    ENDPOINT --> A3
+    A4 -.-> ENDPOINT
+    A5 -.-> ENDPOINT

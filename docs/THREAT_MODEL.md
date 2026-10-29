@@ -1,6 +1,6 @@
 # Threat model
 
-Living document: started in W2, updated after each version and each adversarial-testing session, final in W7. Status as of 20 Oct 2026: v0 measured on the Pi, the v1 software (including fixed release) measured on the Pi on the v0 OS; a v1 development image boots but doesn't run the gate yet; v2 is not built.
+Living document: started in W2, updated after each version and each adversarial-testing session, final in W7. Status as of 20 Oct 2026: v0 measured on the Pi, the v1 software (including fixed release) measured on the Pi on the v0 OS; a v1 development image boots but doesn't run the endpoint yet; v2 is not built.
 
 ## 1. What the device protects
 
@@ -16,8 +16,8 @@ Living document: started in W2, updated after each version and each adversarial-
 
 | Attacker | Controls | Wants |
 |---|---|---|
-| A1 Compromised AI server | Everything on the server side of the device: outputs, proofs, timing, which requests fail, the TCP connection | Move secret bits to someone outside, through answers that still pass the gate |
-| A2 The served model acting as a rogue agent | The same as A1, from inside the inference stack, and patient. Gigurtsis's loss-of-control matrix lists weight exfiltration (technique 5.4.1) as a step a rogue agent takes, and for closed-weight models a prerequisite for replication. In scope: a model that compromises the inference stack or controls timing and failures. Not in scope: secret-bearing content that the approved model itself computes; the gate must release that, since it is a correct answer (see 4.1) | Its own weights out, a few bits at a time |
+| A1 Compromised AI server | Everything on the server side of the device: outputs, proofs, timing, which requests fail, the TCP connection | Move secret bits to someone outside, through answers that still pass the endpoint |
+| A2 The served model acting as a rogue agent | The same as A1, from inside the inference stack, and patient. Gigurtsis's loss-of-control matrix lists weight exfiltration (technique 5.4.1) as a step a rogue agent takes, and for closed-weight models a prerequisite for replication. In scope: a model that compromises the inference stack or controls timing and failures. Not in scope: secret-bearing content that the approved model itself computes; the endpoint must release that, since it is a correct answer (see 4.1) | Its own weights out, a few bits at a time |
 | A3 Outside receiver | One or more ordinary client connections | Decode what A1 or A2 hides; probe the device (invalid requests, timing of errors) |
 | A4 Network attacker | Either link, if not physically protected | Inject, drop or reorder frames; impersonate the server or a client |
 | A5 Holder of a signing key (from v2) | An update, boot or model-approval key | Install a device that releases more |
@@ -41,7 +41,7 @@ outside clients (A3)  |  device  |  AI server (A1, A2)
 - The SRS file is the pinned one, and the ceremony behind it was sound. A pin proves byte identity only.
 - The pinned vk and settings were built from an honest, complete circuit for the claimed model, on a build machine that wasn't compromised. The device can check that a proof matches the vk, not that the vk constrains what we think it does.
 - The EZKL CLI binary matches its pinned release digest; that trusts zkonduit's release process.
-- **Complete mediation:** every path from the AI server to the outside crosses the gate. In v0 this is not enforced: the stock OS has SSH, mDNS, Wi-Fi and its own outbound traffic, and nothing stops the server from having another route out. The v1 image (two wired ports, nothing forwarded, no other services) is the first version where this can be claimed, and it has to be tested from both sides.
+- **Complete mediation:** every path from the AI server to the outside crosses the endpoint. In v0 this is not enforced: the stock OS has SSH, mDNS, Wi-Fi and its own outbound traffic, and nothing stops the server from having another route out. The v1 image (two wired ports, nothing forwarded, no other services) is the first version where this can be claimed, and it has to be tested from both sides.
 - **Logs:** where the log goes and who reads it is not yet defined. If an outsider can read it, the log is an output channel (section 6).
 - The proof binds the encoded request and the outputs (docs/BINDING_SPEC.md), with one pinned model and fixed parameters.
 - Physical access is out of scope (Yogev, 14 Oct): no power, EM, acoustic or thermal channels, no tampering.
@@ -49,14 +49,14 @@ outside clients (A3)  |  device  |  AI server (A1, A2)
 
 ### 4.1 Extraction through correct answers: out of scope, to confirm
 
-A proof shows that `y` came from the pinned model on this `x`. It does nothing against an attacker who learns the model from many correct answers. For the tiny affine + ReLU test model, a handful of chosen requests that keep the ReLUs active can recover the quantised weights by linear algebra, and every proof verifies. The plan puts this out of scope; it is on the agenda for the mentor call (21 Oct) to confirm, or to add a gate policy such as query-rate limits.
+A proof shows that `y` came from the pinned model on this `x`. It does nothing against an attacker who learns the model from many correct answers. For the tiny affine + ReLU test model, a handful of chosen requests that keep the ReLUs active can recover the quantised weights by linear algebra, and every proof verifies. The plan puts this out of scope; it is on the agenda for the mentor call (21 Oct) to confirm, or to add an endpoint policy such as query-rate limits.
 
 For real LLMs, any freedom the proof doesn't pin (sampling seed, temperature, unproven layers) becomes a channel with valid proofs. The test model is deterministic; who chooses the seed is an open question for the mentor.
 
 ## 5. v0 attack surface (measured on the Pi, 11, 13 and 16 Oct)
 
 - Raspberry Pi OS Lite (Debian 13), 633 installed packages, 13 to 15 running system services (the count depends on what has run since boot: 15 on 11 Oct, 13 on 16 Oct).
-- Listening: sshd (TCP 22) and avahi (mDNS on UDP 5353 plus two random UDP ports), on IPv4 and IPv6. The gate adds its own listener on link 1.
+- Listening: sshd (TCP 22) and avahi (mDNS on UDP 5353 plus two random UDP ports), on IPv4 and IPv6. The endpoint adds its own listener on link 1.
 - Verifier: EZKL's official CLI (it also contains the prover and setup code; size in Measurements), run by `pge/cli.py`.
 - Updates: files copied over SSH.
 
@@ -69,7 +69,7 @@ Status as of 20 Oct in the last column. "Open" means the channel is not closed b
 | Channel | How A1/A2 uses it | Planned defence (version) | v0 |
 |---|---|---|---|
 | Timing | Delay each answer by a chosen amount | Fixed release time with a verification budget (`--release fixed`, 19 Oct) | **Reduced, not closed (K8):** v0 and arrival order leak (the planted bits were read back on the Pi); under fixed release the 1 s-code decoder fails, but a sub-millisecond shift follows the server's delays without spin; with a 5 ms spin no mean shift was detected and a 512-answer pre-registered test was inconclusive, so what that decoder finds is small but the residue isn't shown to be gone. Costs every answer the full budget (4 s here). Numbers: the book's Measurements page |
-| Ordering | Answer concurrent requests in a chosen order | Release in arrival order (v1); time slots (v2) | Closed in the v1 software for the order admitted answers are written on the gate, failures included (`SERVICE_SPEC.md` section 4). Not covered: `busy` and halted answers leave at once, and log timing. Order across separate connections is only smoke-tested: one run of 8 bits each, read back under immediate release and constant under arrival order (the book's Measurements page). v0 released answers as checks finished |
+| Ordering | Answer concurrent requests in a chosen order | Release in arrival order (v1); time slots (v2) | Closed in the v1 software for the order admitted answers are written on the endpoint, failures included (`SERVICE_SPEC.md` section 4). Not covered: `busy` and halted answers leave at once, and log timing. Order across separate connections is only smoke-tested: one run of 8 bits each, read back under immediate release and constant under arrival order (the book's Measurements page). v0 released answers as checks finished |
 | Whether an answer arrives | Fail on purpose: bad proofs, drops, resets, missed deadlines | One generic error; failure threshold and response (v1, v2). With timing fixed, still up to 1 bit per request, and a sparse failure's position carries log2 N bits per block of N | **Open, shown on the Pi (K32):** 4 failures in 64 answers carried 16 bits under every release policy. One server-independent error string; failures are counted, and `halt_after` stops every successful answer (pending and held ones become `unavailable`, later requests get `unavailable`), off by default; error replies keep flowing, so their timing still carries information |
 | Sizes and packet metadata | Response length, TCP segmentation, header fields | The device builds every outgoing packet itself; fixed-size responses (v1, v2) | Partly: in the v1 software every reply frame has one size and the server can't choose the number of output values; the OS's TCP stack (segmentation, headers) is still stock |
 | Answer content | Pick among valid answers or encodings | One pinned model, the device's own encoding, canonical values, `y` decoded from verified values, proof never released | **Closed for the test bundle:** binding and service tests |
@@ -83,7 +83,7 @@ Status as of 20 Oct in the last column. "Open" means the channel is not closed b
 |---|---|---|
 | Replay an old answer | Pending table | One answer per `seq`; tested (`test_late_answer_is_dropped_and_answered_once`, `test_replayed_answer_only_passes_for_the_same_request`) |
 | Proof for another request or model | Binding | Tested: other request, other circuit, tampered output; EZKL also refuses wrong instance layouts (`test_instance_layout_is_enforced_by_ezkl`) |
-| Bytes appended to a valid proof | Proof format | EZKL accepts them (`test_trailing_proof_bytes_still_verify`), so the gate pins the exact proof length (`Policy.proof_bytes`); tested |
+| Bytes appended to a valid proof | Proof format | EZKL accepts them (`test_trailing_proof_bytes_still_verify`), so the endpoint pins the exact proof length (`Policy.proof_bytes`); tested |
 | Inject, replay or reorder frames on either link | Links (A4) | No transport security in v0; replay is limited to one answer per `seq` |
 | A substituted verifier binary that accepts everything | Supply chain | Digest pin on download; v1 bakes the binary into the image |
 | Make the device unreliable until operators bypass it | Availability | Failures are logged and counted; nothing yet makes a bypass visible |

@@ -1,4 +1,4 @@
-"""The Rust gate's failure cap against the reference model (observer/cap_model.py), over TCP."""
+"""The Rust endpoint's failure cap against the reference model (observer/cap_model.py), over TCP."""
 import asyncio
 import random
 import shutil
@@ -9,8 +9,8 @@ import pytest
 
 from conftest import ROOT, TINY, TINY_X
 from pge.protocol import Wire, frame, read_frame
-from test_gate_rust import ezkl, free_port, rust_bin  # noqa: F401
-from test_gate_rust_robust import log_records
+from test_endpoint_rust import ezkl, free_port, rust_bin  # noqa: F401
+from test_endpoint_rust_robust import log_records
 from test_service import FakeProver
 from prover.server import Server
 
@@ -42,13 +42,13 @@ def expected(fail, window, failures, cooldown):
     return ok, outcomes
 
 
-async def run_gate(binary, bundle, work, fail, cap):
+async def run_endpoint(binary, bundle, work, fail, cap):
     work.mkdir()
     for name, source in (("settings.json", bundle.settings), ("vk.key", bundle.vk), ("kzg.srs", bundle.srs)):
         shutil.copy(source, work / name)
     server = Server(Patterned(bundle.spec, fail))
     upstream = await asyncio.start_server(server.handle, "127.0.0.1", 0)
-    port, logpath = free_port(), work / "gate.log"
+    port, logpath = free_port(), work / "endpoint.log"
     args = [str(binary), "--listen", f"127.0.0.1:{port}", "--server", f"127.0.0.1:{upstream.sockets[0].getsockname()[1]}",
             "--bundle", str(work), "--pins", str(ROOT / "device/tiny.sha256"), "--domain", str(TINY / "domain.json"),
             "--proof-bytes", "3072", "--deadline", "5", "--log", str(logpath), *cap]
@@ -86,7 +86,7 @@ def test_cap_matches_reference_model(rust_bin, tiny_bundle, tmp_path, window, fa
     rng = random.Random(seed)
     fail = [rng.random() < 0.4 for _ in range(30)]
     cap = ["--cap-window", str(window), "--cap-failures", str(failures), "--cap-cooldown", str(cooldown)]
-    ok, records = asyncio.run(run_gate(rust_bin, tiny_bundle, tmp_path / "rs", fail, cap))
+    ok, records = asyncio.run(run_endpoint(rust_bin, tiny_bundle, tmp_path / "rs", fail, cap))
     want, outcomes = expected(fail, window, failures, cooldown)
     assert ok == want
     results = [r["result"] for r in records]
@@ -96,7 +96,7 @@ def test_cap_matches_reference_model(rust_bin, tiny_bundle, tmp_path, window, fa
 
 def test_without_cap_every_failure_shows(rust_bin, tiny_bundle, tmp_path):  # noqa: F811
     fail = [True, False] * 6
-    ok, records = asyncio.run(run_gate(rust_bin, tiny_bundle, tmp_path / "rs", fail, []))
+    ok, records = asyncio.run(run_endpoint(rust_bin, tiny_bundle, tmp_path / "rs", fail, []))
     assert ok == [not f for f in fail]
     assert not any(r["result"] in ("capped", "cap_tripped") for r in records)
 

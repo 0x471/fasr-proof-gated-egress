@@ -4,9 +4,9 @@
 
 # Understand
 
-- [How the gate works](tour.md)
+- [How the endpoint works](tour.md)
 - [What a hacked server can still leak](leakage.md)
-- [How hard the gate is to attack](hardening.md)
+- [How hard the endpoint is to attack](hardening.md)
 - [Limitations and open questions](limitations.md)
 
 # Evidence
@@ -17,7 +17,7 @@
 
 # Reference
 
-- [Gate service specification](service-spec.md)
+- [Endpoint service specification](service-spec.md)
 - [Request binding specification](binding-spec.md)
 - [Reproduce the results](reproduce.md)
 - [Repository map](repo-map.md)

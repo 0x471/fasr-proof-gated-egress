@@ -1,7 +1,7 @@
-"""Wire format of the gate service (v1): length-prefixed binary frames of fixed size. See docs/SERVICE_SPEC.md.
+"""Wire format of the endpoint service (v1): length-prefixed binary frames of fixed size. See docs/SERVICE_SPEC.md.
 
 For one pinned circuit every message type has one size, except the server's answer, whose
-proof length the gate checks against its pin. Numbers are big-endian; field elements are
+proof length the endpoint checks against its pin. Numbers are big-endian; field elements are
 the 32 little-endian bytes EZKL uses.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ ERRORS = ("bad_request", "unavailable")
 _STATUS = {"bad_request": BAD_REQUEST, "unavailable": UNAVAILABLE}
 MAX_ID = 1 << 53
 FELT_BYTES = 32
-# Upper bound for a proof in one answer; the gate pins the exact length (Policy.proof_bytes).
+# Upper bound for a proof in one answer; the endpoint pins the exact length (Policy.proof_bytes).
 PROOF_MAX = 1 << 16
 _HEAD = struct.Struct(">BQ")
 

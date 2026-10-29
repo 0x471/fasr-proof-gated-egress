@@ -157,7 +157,7 @@ pub fn limits(cpu: u64) -> io::Result<()> {
             (libc::RLIMIT_FSIZE, 0),
             (libc::RLIMIT_NOFILE, 64),
         ] {
-            // Only ever lower a limit, soft or hard: never more than the gate itself was given.
+            // Only ever lower a limit, soft or hard: never more than the endpoint itself was given.
             let mut old = libc::rlimit {
                 rlim_cur: 0,
                 rlim_max: 0,

@@ -40,7 +40,7 @@ struct Job {
     seq: u64,
     data: Vec<u8>,
 }
-struct Gate {
+struct Endpoint {
     config: Config,
     bundle: Arc<Bundle>,
     domain: Option<Domain>,
@@ -56,7 +56,7 @@ struct Gate {
     accept_paused: Option<Instant>,
     listener_fd: i32,
 }
-impl Gate {
+impl Endpoint {
     fn now(&self) -> u64 {
         u64::try_from(self.clock.elapsed().as_nanos()).unwrap_or(u64::MAX)
     }
@@ -369,7 +369,7 @@ pub fn run(config: Config) -> Result<(), String> {
     let listener = TcpListener::bind(config.listen).map_err(|e| format!("listen: {e}"))?;
     listener.set_nonblocking(true).map_err(|_| "listener")?;
     let listener_fd = listener.as_raw_fd();
-    let mut gate = Gate {
+    let mut endpoint = Endpoint {
         core: Core::new(config.policy),
         config,
         bundle,
@@ -387,7 +387,7 @@ pub fn run(config: Config) -> Result<(), String> {
     };
     // Threads write one byte here when they finish, so the poll below wakes for them.
     // One shared writer: cloning the socket per thread would need a descriptor each time,
-    // and running out of descriptors must not stop the gate.
+    // and running out of descriptors must not stop the endpoint.
     let (mut wake_rx, wake_tx) = UnixStream::pair().map_err(|_| "wake pipe")?;
     wake_rx.set_nonblocking(true).map_err(|_| "wake pipe")?;
     wake_tx.set_nonblocking(true).map_err(|_| "wake pipe")?;
@@ -400,14 +400,14 @@ pub fn run(config: Config) -> Result<(), String> {
     let mut was_connected = false;
     let mut release_at: Option<u64> = None;
     loop {
-        if was_connected && gate.server.is_none() {
+        if was_connected && endpoint.server.is_none() {
             retry = Instant::now() + delay;
             delay = (delay * 2).min(Duration::from_secs(10));
         }
-        was_connected = gate.server.is_some();
-        if gate.server.is_none() && connecting.is_none() && Instant::now() >= retry {
+        was_connected = endpoint.server.is_some();
+        if endpoint.server.is_none() && connecting.is_none() && Instant::now() >= retry {
             let (tx, rx) = mpsc::channel();
-            let addr = gate.config.server;
+            let addr = endpoint.config.server;
             let wake = Arc::clone(&wake_tx);
             let spawned = thread::Builder::new().spawn(move || {
                 let _ = tx.send(TcpStream::connect_timeout(&addr, Duration::from_secs(10)));
@@ -416,14 +416,14 @@ pub fn run(config: Config) -> Result<(), String> {
             if spawned.is_ok() {
                 connecting = Some(rx);
             } else {
-                gate.log(json!({"result":"connect_failed"}));
+                endpoint.log(json!({"result":"connect_failed"}));
                 retry = Instant::now() + delay;
                 delay = (delay * 2).min(Duration::from_secs(10));
             }
         }
 
-        let wait = next_wait(&gate, release_at, connecting.is_none().then_some(retry));
-        poll_once(&gate, &wake_rx, wait);
+        let wait = next_wait(&endpoint, release_at, connecting.is_none().then_some(retry));
+        poll_once(&endpoint, &wake_rx, wait);
         let mut sink = [0u8; 64];
         while matches!(wake_rx.read(&mut sink), Ok(n) if n > 0) {}
 
@@ -432,28 +432,28 @@ pub fn run(config: Config) -> Result<(), String> {
                 connecting = None;
                 match result.and_then(Connection::new) {
                     Ok(c) => {
-                        gate.server = Some(c);
+                        endpoint.server = Some(c);
                         was_connected = true;
                         delay = Duration::from_millis(500);
                     }
                     Err(_) => {
-                        gate.log(json!({"result":"connect_failed"}));
+                        endpoint.log(json!({"result":"connect_failed"}));
                         retry = Instant::now() + delay;
                         delay = (delay * 2).min(Duration::from_secs(10));
                     }
                 }
             }
         }
-        if gate.accept_paused.is_some_and(|t| Instant::now() >= t) {
-            gate.accept_paused = None;
+        if endpoint.accept_paused.is_some_and(|t| Instant::now() >= t) {
+            endpoint.accept_paused = None;
         }
-        if gate.accept_paused.is_none() {
-            accept_clients(&mut gate, &listener, &mut client_seq);
+        if endpoint.accept_paused.is_none() {
+            accept_clients(&mut endpoint, &listener, &mut client_seq);
         }
-        gate.read_server();
-        gate.read_clients();
-        gate.core.expire(gate.now());
-        gate.changed();
+        endpoint.read_server();
+        endpoint.read_clients();
+        endpoint.core.expire(endpoint.now());
+        endpoint.changed();
         while let Ok((seq, verdict)) = done_rx.try_recv() {
             active = false;
             let decision = match verdict {
@@ -461,16 +461,16 @@ pub fn run(config: Config) -> Result<(), String> {
                 Verdict::Reject => Decision::failure("reject", "proof"),
                 Verdict::Error => Decision::failure("error", "verifier"),
             };
-            gate.core.complete(seq, gate.now(), decision);
-            gate.changed();
+            endpoint.core.complete(seq, endpoint.now(), decision);
+            endpoint.changed();
         }
         if !active {
-            while let Some(job) = gate.jobs.pop_front() {
-                if let Some(left) = gate.core.budget(job.seq, gate.now()) {
-                    let bundle = Arc::clone(&gate.bundle);
+            while let Some(job) = endpoint.jobs.pop_front() {
+                if let Some(left) = endpoint.core.budget(job.seq, endpoint.now()) {
+                    let bundle = Arc::clone(&endpoint.bundle);
                     let tx = done_tx.clone();
                     let wake = Arc::clone(&wake_tx);
-                    let len = gate.config.proof_bytes;
+                    let len = endpoint.config.proof_bytes;
                     let seq = job.seq;
                     let started = thread::Builder::new().spawn(move || {
                         let verdict =
@@ -481,36 +481,36 @@ pub fn run(config: Config) -> Result<(), String> {
                     if started.is_ok() {
                         active = true;
                     } else {
-                        gate.core.complete(
+                        endpoint.core.complete(
                             seq,
-                            gate.now(),
+                            endpoint.now(),
                             Decision::failure("error", "verifier_failed"),
                         );
                     }
                     break;
                 }
             }
-            gate.changed();
+            endpoint.changed();
         }
         // Exactly one spin opportunity per driver iteration, never from fail_all.
-        release_at = gate.pump(true);
+        release_at = endpoint.pump(true);
     }
 }
 
-fn accept_clients(gate: &mut Gate, listener: &TcpListener, client_seq: &mut u64) {
+fn accept_clients(endpoint: &mut Endpoint, listener: &TcpListener, client_seq: &mut u64) {
     for _ in 0..16 {
         match listener.accept() {
             Ok((stream, _)) => {
-                if gate.clients.len() >= 64 {
-                    gate.log(json!({"result":"client_refused"}));
+                if endpoint.clients.len() >= 64 {
+                    endpoint.log(json!({"result":"client_refused"}));
                     continue;
                 }
                 let Ok(conn) = Connection::new(stream) else {
-                    gate.log(json!({"result":"accept_failed"}));
+                    endpoint.log(json!({"result":"accept_failed"}));
                     continue;
                 };
                 *client_seq = client_seq.wrapping_add(1);
-                gate.clients.insert(
+                endpoint.clients.insert(
                     *client_seq,
                     Client {
                         conn,
@@ -536,8 +536,8 @@ fn accept_clients(gate: &mut Gate, listener: &TcpListener, client_seq: &mut u64)
             // Out of descriptors or memory: keep serving, and stop accepting for a moment
             // so a full listen queue doesn't spin the loop (asyncio pauses the same way).
             Err(_) => {
-                gate.log(json!({"result":"accept_failed"}));
-                gate.accept_paused = Some(Instant::now() + Duration::from_secs(1));
+                endpoint.log(json!({"result":"accept_failed"}));
+                endpoint.accept_paused = Some(Instant::now() + Duration::from_secs(1));
                 break;
             }
         }
@@ -545,26 +545,26 @@ fn accept_clients(gate: &mut Gate, listener: &TcpListener, client_seq: &mut u64)
 }
 
 // Milliseconds poll may sleep: until the earliest timer, rounded up so it never wakes early.
-fn next_wait(gate: &Gate, release_at: Option<u64>, retry: Option<Instant>) -> i32 {
+fn next_wait(endpoint: &Endpoint, release_at: Option<u64>, retry: Option<Instant>) -> i32 {
     let now = Instant::now();
-    let at = |ns: u64| gate.clock.checked_add(Duration::from_nanos(ns));
-    let deadline = Duration::from_nanos(gate.config.policy.deadline);
+    let at = |ns: u64| endpoint.clock.checked_add(Duration::from_nanos(ns));
+    let deadline = Duration::from_nanos(endpoint.config.policy.deadline);
     let mut times: Vec<Instant> = Vec::new();
     times.extend(release_at.and_then(at));
-    times.extend(gate.core.next_expiry().and_then(at));
-    if gate.server.is_none() {
+    times.extend(endpoint.core.next_expiry().and_then(at));
+    if endpoint.server.is_none() {
         times.extend(retry);
     }
-    if let Some(s) = &gate.server {
+    if let Some(s) = &endpoint.server {
         times.extend(s.started.and_then(|t| t.checked_add(deadline)));
     }
-    for c in gate.clients.values() {
+    for c in endpoint.clients.values() {
         if c.reading {
-            times.extend(c.read_since.checked_add(gate.config.idle));
+            times.extend(c.read_since.checked_add(endpoint.config.idle));
         }
         times.extend(c.drain_until);
     }
-    times.extend(gate.accept_paused);
+    times.extend(endpoint.accept_paused);
     match times.into_iter().min() {
         None => MAX_WAIT_MS,
         Some(t) if t <= now => 0,
@@ -575,21 +575,21 @@ fn next_wait(gate: &Gate, release_at: Option<u64>, retry: Option<Instant>) -> i3
     }
 }
 
-fn poll_once(gate: &Gate, wake: &UnixStream, wait_ms: i32) {
+fn poll_once(endpoint: &Endpoint, wake: &UnixStream, wait_ms: i32) {
     let fd = |fd, events| libc::pollfd {
         fd,
         events,
         revents: 0,
     };
     let mut fds = vec![fd(wake.as_raw_fd(), libc::POLLIN)];
-    if gate.accept_paused.is_none() {
-        fds.push(fd(gate.listener_fd, libc::POLLIN));
+    if endpoint.accept_paused.is_none() {
+        fds.push(fd(endpoint.listener_fd, libc::POLLIN));
     }
-    if let Some(s) = &gate.server {
+    if let Some(s) = &endpoint.server {
         let out = if s.wants_write() { libc::POLLOUT } else { 0 };
         fds.push(fd(s.fd(), libc::POLLIN | out));
     }
-    for c in gate.clients.values() {
+    for c in endpoint.clients.values() {
         let input = if c.reading && c.conn.buffered <= 65536 {
             libc::POLLIN
         } else {

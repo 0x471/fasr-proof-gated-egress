@@ -1,15 +1,15 @@
-"""Outside observer: send requests to the gate one at a time and record each answer and its time.
+"""Outside observer: send requests to the endpoint one at a time and record each answer and its time.
 
 Usage: python observer/client.py HOST PORT X_JSON [--n N] [--batch K] > trace.jsonl
 X_JSON is one request's x, e.g. '[[0.5, -0.2, 0.9, 0.1]]'. Each output line is
 {"id", "elapsed_ms", "answer"}, printed as each answer arrives; elapsed_ms (to the microsecond) runs
 from sending the request to reading its answer.
 With --batch K, K requests are sent at once and their answers read in arrival order, so the
-rows show the order in which the gate released them. With --clients C, C connections each send one
-request per round (client 0 first, --gap-ms apart, so the gate admits them in client order); each
+rows show the order in which the endpoint released them. With --clients C, C connections each send one
+request per round (client 0 first, --gap-ms apart, so the endpoint admits them in client order); each
 row also has "client", "round" and "recv_ms" (receive time since the start), and rows are in the
 order answers arrived across all connections.
-Requests and answers use the gate's binary format (pge/protocol.py); the observer needs no
+Requests and answers use the endpoint's binary format (pge/protocol.py); the observer needs no
 bundle, so it sizes requests from x and answers from their frame length (y comes back flat).
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ async def trace(host: str, port: int, xs: list, on_row=None) -> list[dict]:
             await writer.drain()
             n = struct.unpack(">I", await reader.readexactly(4))[0]
             if n < 10 or (n - 10) % 8:
-                raise ValueError(f"reply of {n} bytes is not a gate reply")
+                raise ValueError(f"reply of {n} bytes is not an endpoint reply")
             answer = Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
             rows.append({"id": cid, "elapsed_ms": round((time.monotonic() - start) * 1000, 3), "answer": answer})
             if on_row:
@@ -61,7 +61,7 @@ async def trace_batches(host: str, port: int, xs: list, batch: int, on_row=None)
             for _ in range(base, min(base + batch, len(xs))):
                 n = struct.unpack(">I", await reader.readexactly(4))[0]
                 if n < 10 or (n - 10) % 8:
-                    raise ValueError(f"reply of {n} bytes is not a gate reply")
+                    raise ValueError(f"reply of {n} bytes is not an endpoint reply")
                 answer = Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
                 rows.append({"id": answer["id"], "elapsed_ms": round((time.monotonic() - start) * 1000, 3),
                              "answer": answer})
@@ -75,7 +75,7 @@ async def trace_batches(host: str, port: int, xs: list, batch: int, on_row=None)
 async def _read_reply(reader: asyncio.StreamReader) -> dict:
     n = struct.unpack(">I", await reader.readexactly(4))[0]
     if n < 10 or (n - 10) % 8:
-        raise ValueError(f"reply of {n} bytes is not a gate reply")
+        raise ValueError(f"reply of {n} bytes is not an endpoint reply")
     return Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
 
 

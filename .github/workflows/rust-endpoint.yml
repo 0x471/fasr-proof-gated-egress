@@ -1,9 +1,9 @@
-name: rust gate
+name: rust endpoint
 on: [push, pull_request]
 permissions:
   contents: read
 jobs:
-  gate:
+  endpoint:
     strategy:
       fail-fast: false
       matrix:
@@ -28,10 +28,10 @@ jobs:
       - name: prepare pinned sources and toolchain
         run: |
           rustup toolchain install nightly-2025-12-01 --profile minimal
-          bash gate/prepare.sh
+          bash endpoint/prepare.sh
           echo "CARGO_HOME=$PWD/.deps/cargo" >> "$GITHUB_ENV"
           echo "PGE_SRS=$RUNNER_TEMP/kzg.srs" >> "$GITHUB_ENV"
-          echo "PGE_RUST_BIN=$PWD/gate/target/release/pge-gate" >> "$GITHUB_ENV"
+          echo "PGE_RUST_BIN=$PWD/endpoint/target/release/pge-endpoint" >> "$GITHUB_ENV"
       - name: fetch pinned test artifacts
         env:
           ARCHIVE: ${{ matrix.archive }}
@@ -51,10 +51,10 @@ jobs:
         run: python -m pip install "ezkl==23.0.5"
       - name: test and build Rust
         run: |
-          cargo +nightly-2025-12-01 test --manifest-path gate/Cargo.toml --workspace --locked
-          cargo +nightly-2025-12-01 build --manifest-path gate/Cargo.toml --release --locked
-      - name: compare both gates over TCP
-        run: python -m pytest tests/test_gate_rust.py tests/test_gate_rust_cap.py tests/test_gate_rust_robust.py tests/test_cap_model.py tests/test_docs.py -q -rs
+          cargo +nightly-2025-12-01 test --manifest-path endpoint/Cargo.toml --workspace --locked
+          cargo +nightly-2025-12-01 build --manifest-path endpoint/Cargo.toml --release --locked
+      - name: compare both endpoints over TCP
+        run: python -m pytest tests/test_endpoint_rust.py tests/test_endpoint_rust_cap.py tests/test_endpoint_rust_robust.py tests/test_cap_model.py tests/test_docs.py -q -rs
       - name: build and check static aarch64
         if: ${{ !matrix.wheel }}
         run: |
@@ -63,20 +63,20 @@ jobs:
           rustup target add --toolchain nightly-2025-12-01 aarch64-unknown-linux-musl
           export CC_aarch64_unknown_linux_musl=musl-gcc
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
-          cargo +nightly-2025-12-01 build --manifest-path gate/Cargo.toml --release --locked --target aarch64-unknown-linux-musl
-          PGE_RUST_BIN="$PWD/gate/target/aarch64-unknown-linux-musl/release/pge-gate" \
-            python -m pytest tests/test_gate_rust.py tests/test_gate_rust_cap.py tests/test_gate_rust_robust.py -q -rs
-      - name: record the static aarch64 gate
+          cargo +nightly-2025-12-01 build --manifest-path endpoint/Cargo.toml --release --locked --target aarch64-unknown-linux-musl
+          PGE_RUST_BIN="$PWD/endpoint/target/aarch64-unknown-linux-musl/release/pge-endpoint" \
+            python -m pytest tests/test_endpoint_rust.py tests/test_endpoint_rust_cap.py tests/test_endpoint_rust_robust.py -q -rs
+      - name: record the static aarch64 endpoint
         if: ${{ !matrix.wheel }}
         run: |
-          cd gate/target/aarch64-unknown-linux-musl/release
-          sha256sum pge-gate | tee pge-gate.sha256
+          cd endpoint/target/aarch64-unknown-linux-musl/release
+          sha256sum pge-endpoint | tee pge-endpoint.sha256
       - uses: actions/upload-artifact@v7
         if: ${{ !matrix.wheel }}
         with:
-          name: pge-gate-aarch64-musl-${{ github.sha }}
+          name: pge-endpoint-aarch64-musl-${{ github.sha }}
           path: |
-            gate/target/aarch64-unknown-linux-musl/release/pge-gate
-            gate/target/aarch64-unknown-linux-musl/release/pge-gate.sha256
+            endpoint/target/aarch64-unknown-linux-musl/release/pge-endpoint
+            endpoint/target/aarch64-unknown-linux-musl/release/pge-endpoint.sha256
           if-no-files-found: error
           retention-days: 90
