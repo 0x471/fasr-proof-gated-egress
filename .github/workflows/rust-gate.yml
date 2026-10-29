@@ -66,3 +66,17 @@ jobs:
           cargo +nightly-2025-12-01 build --manifest-path gate/Cargo.toml --release --locked --target aarch64-unknown-linux-musl
           PGE_RUST_BIN="$PWD/gate/target/aarch64-unknown-linux-musl/release/pge-gate" \
             python -m pytest tests/test_gate_rust.py tests/test_gate_rust_cap.py tests/test_gate_rust_robust.py -q -rs
+      - name: record the static aarch64 gate
+        if: ${{ !matrix.wheel }}
+        run: |
+          cd gate/target/aarch64-unknown-linux-musl/release
+          sha256sum pge-gate | tee pge-gate.sha256
+      - uses: actions/upload-artifact@v7
+        if: ${{ !matrix.wheel }}
+        with:
+          name: pge-gate-aarch64-musl-${{ github.sha }}
+          path: |
+            gate/target/aarch64-unknown-linux-musl/release/pge-gate
+            gate/target/aarch64-unknown-linux-musl/release/pge-gate.sha256
+          if-no-files-found: error
+          retention-days: 90
