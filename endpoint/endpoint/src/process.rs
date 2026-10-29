@@ -141,7 +141,33 @@ pub fn run(mut cmd: Command, timeout: Duration, input: &[u8]) -> Verdict {
                 }
             }
         }
-        thread::sleep(Duration::from_millis(1).min(end.saturating_duration_since(Instant::now())));
+        // Wait for room in the input pipe or output from the child, not a fixed sleep: the job is
+        // megabytes and the pipe holds 64 KiB, so a sleep per write added tens of ms per check.
+        let mut fds = Vec::with_capacity(3);
+        if let Some(pipe) = stdin.as_ref() {
+            fds.push(libc::pollfd {
+                fd: pipe.as_raw_fd(),
+                events: libc::POLLOUT,
+                revents: 0,
+            });
+        }
+        for (fd, done) in [(stdout.as_raw_fd(), oe), (stderr.as_raw_fd(), ee)] {
+            if !done {
+                fds.push(libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                });
+            }
+        }
+        let left = end.saturating_duration_since(Instant::now());
+        if fds.is_empty() {
+            thread::sleep(Duration::from_millis(1).min(left));
+        } else {
+            let ms = left.as_millis().clamp(1, 100) as libc::c_int;
+            // The fds belong to pipes that stay open for this call; a failed poll just loops.
+            unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, ms) };
+        }
     }
 }
 
