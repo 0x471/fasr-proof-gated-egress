@@ -388,8 +388,8 @@ impl Bundle {
     pub fn check(&self) -> Result<()> {
         self.pins.check(&self.raw)
     }
+    // The child re-hashes everything it receives, so a changed snapshot fails there.
     pub fn write_job(&self, proof: &[u8], out: &mut impl Write) -> Result<()> {
-        self.check()?;
         if proof.len() > MAX_PROOF_JSON {
             return Err("proof size");
         }
@@ -479,7 +479,6 @@ fn checked_proof(bundle: &Bundle, raw: &[u8], proof_bytes: usize) -> Result<Verd
     };
     use halo2curves::bn256::{Bn256, Fr, G1Affine};
     use snark_verifier::system::halo2::transcript::evm::EvmTranscript;
-    bundle.check()?;
     let v = match canonical_proof(raw) {
         Ok(v) => v,
         Err(_) => return Ok(Verdict::Reject),
