@@ -1,0 +1,26 @@
+#!/bin/sh
+# Starts the endpoint at boot as the unprivileged user pge; the log goes to tmpfs.
+DAEMON=/usr/bin/pge-endpoint
+PIDFILE=/var/run/endpoint.pid
+ARGS="--listen 192.168.2.2:8700 --server 192.168.2.1:8701 --bundle /etc/pge/bundle --pins /etc/pge/pins.sha256 \
+--domain /etc/pge/domain.json --proof-bytes 3072 --deadline 4 --release fixed --spin-ms 5 --log /var/log/endpoint.log"
+
+case "$1" in
+	start)
+		printf "Starting endpoint: "
+		start-stop-daemon -S -b -m -p "$PIDFILE" -c pge -x "$DAEMON" -- $ARGS && echo OK || echo FAIL
+		;;
+	stop)
+		printf "Stopping endpoint: "
+		start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE" && echo OK || echo FAIL
+		;;
+	restart)
+		"$0" stop
+		sleep 1
+		"$0" start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
