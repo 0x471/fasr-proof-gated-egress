@@ -71,8 +71,26 @@ Other runs the same day at 256 MiB: one first check, then 200/200 and 10/10, so 
 | Version | Seen from outside | Notes |
 |---|---|---|
 | v0 (stock OS, 16 Oct) | TCP 22 (ssh) and 8700 (the endpoint); UDP 5353 (mDNS) | 633 packages, 13 running services |
+| v0 (stock OS, 29 Oct, endpoint not running) | TCP 22 only (`nmap -p-`); 691 TCP ports showed as filtered, not yet explained; UDP not scanned. On the device: UDP 5353 (mDNS) and two unattributed UDP ports | 633 packages, 13 running services, 66 kernel modules (Wi-Fi and Bluetooth drivers loaded); per-port software in `docs/ATTACK_SURFACE.md` |
 | v1 development image (16 Oct, `sdcard.img` 159 MB) | 0 of 65,535 TCP ports open; top 100 UDP ports closed; no IPv6 | **No endpoint was running on this image yet**, so this shows a quiet base system, not a working hardened endpoint |
 <!-- ANCHOR_END: attack-surface -->
+
+## The Rust endpoint on the Pi (29 Oct)
+
+The device now runs the Rust endpoint (static 64-bit ARM binary from CI, no Python or EZKL CLI on the device). Same Pi and setup as above; raw data in the git-ignored `runs/2026-10-29_rust/`.
+
+| Check | Result |
+|---|---|
+| Checker alone (`device/rust_verify_cost.py`, one thread, n = 20) | valid accepted, changed output / changed input / garbage proof rejected, truncated job an error; 189 ms per check (Python endpoint path: 239 ms) |
+| Endpoint alone, local stub server (`device/endpoint_latency.py`, n = 30, two runs each, interleaved) | Rust 192 / 193 ms, Python 241 / 242 ms per answer |
+| End to end with the laptop prover (honest, arrival, n = 16, two runs each, interleaved) | Rust 1008 / 1023 ms, Python 1065 / 1074 ms |
+| Misbehaving server (the table above, plus wrong id and dropped answers) | same outcomes as the Python endpoint; a proof made for another question is rejected |
+| Leak matrix (arrival and fixed release, the bits in the next section) | same as the Python endpoint: timing leaks 16/16 under arrival release; order blocked; failure position leaks 16/16 under both |
+| Failure cap on (W = 64, F = 1, C = 64; fixed release, 64 answers) | all 64 replies match `observer/cap_model.py`; 4 of 16 planted bits got out (16/16 without the cap); 18 of 64 answers ok (60 of 64 without it) |
+| Three connections at once (arrival and fixed, honest and order code) | all answers ok; the order code decoded to a constant |
+| 5 ms spin, 512 answers, the same pre-registered protocol | inconclusive again: held-out decoder 0.44 / 0.48 errors, p = 0.0325; received 0.8-2.8 ms after the release time |
+
+Two fixes made the Rust endpoint faster than the Python one: each check had hashed the 4 MB bundle three times (this Pi's CPU has no SHA instructions, about 25-28 ms per pass), and the supervisor slept 1 ms after every 64 KiB written to the checker, about 66 ms per check. Before them the Rust endpoint was about 65 ms slower per answer end to end.
 
 ## The endpoint end to end
 
