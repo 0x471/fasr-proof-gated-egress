@@ -40,8 +40,8 @@ release is intentionally unsupported.
   with resource limits; bounded pipe records carry the bundle and proof.
 
 The verifier writes no runtime files. `--log` is an explicit optional write
-by the parent; omit it to send records to stderr. Verification re-hashes the
-private memory snapshot before each job and again in the child. Changes to
+by the parent; omit it to send records to stderr. The child re-hashes the
+bundle it receives against the pins before every check. Changes to
 the original bundle after startup cannot change that snapshot. The network
 and scheduler still share a process and user. Process isolation does not
 replace the device's planned user, filesystem and network restrictions.
