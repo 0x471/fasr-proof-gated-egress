@@ -1,0 +1,8 @@
+[package]
+name = "pge-update"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+sha2.workspace = true
