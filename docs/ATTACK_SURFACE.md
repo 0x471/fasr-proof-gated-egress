@@ -39,7 +39,7 @@ Buildroot 2025.02.18, `image/build.sh` (`242cb4e`), endpoint binary sha256 `3ebf
 
 Other services: `syslogd`, `klogd`, `crond` (removed from `abb7d3b`), `seedrng` (can't save its seed on the read-only root).
 
-**Next image (`abb7d3b`, built 30 Oct, not booted yet):** netfilter built into the kernel and an `nftables` rule set loaded before the network: in, only new TCP connections to 8700 from 192.168.2.0/24; out, only new TCP connections to the server (192.168.2.1:8701); everything else dropped, ping included. The endpoint refuses to start if the rules aren't loaded. The rule set loaded cleanly in a Linux network namespace; it hasn't run on the Pi.
+**Next image (`abb7d3b`, built 30 Oct, not booted yet):** netfilter built into the kernel and an `nftables` rule set loaded before the network: in, only new TCP connections to 8700 from 192.168.2.0/24; out, only new TCP connections to the server (192.168.2.1:8701); everything else dropped, ping included. The endpoint refuses to start if the rules aren't loaded. The rule set loaded cleanly in a Linux network namespace, and on the Pi (30 Oct, after a power cycle; image sha256 `a120f52c...4170`): ping and all 65,534 TCP ports other than 8700 are dropped, and the endpoint starts and answers.
 
 **Scan artefacts.** Homebrew `nmap` on the laptop is blocked by macOS's Local Network permission (every port "host-unreach"); scans used Apple's Python instead. Parallel scans also time out on contiguous port ranges; those ports re-probed one at a time were closed. The 691 "filtered" ports on v0 (29 Oct) are most likely the same artefact.
 
