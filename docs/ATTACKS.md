@@ -3,13 +3,13 @@
 Every scenario catalogued against the device, by us, by reviewers or by testers: what it targets, how far it got, and its evidence (a test, a Pi run, or none yet). Living document; final in W7.
 
 <!-- ANCHOR: summary -->
-The catalogue has 44 scenarios: 32 stopped, 2 allowed on purpose, 8 that still work, are only partly stopped or are untested, and 2 out of scope. Some were shown on the Pi, some only in tests, and some are only proposed; the counts describe coverage, not a security score.
+The catalogue has 48 scenarios: 36 stopped, 2 allowed on purpose, 8 that still work, are only partly stopped or are untested, and 2 out of scope. Some were shown on the Pi, some only in tests, and some are only proposed; the counts describe coverage, not a security score.
 <!-- ANCHOR_END: summary -->
 
 <!-- ANCHOR: outcomes -->
 | Outcome | Scenarios | Examples |
 |---|---|---|
-| Stopped | 32 | Edited answers, a proof for a different question, a proof from another model, padded proofs, garbage or oversized messages, answering twice or late, malicious proofs that try to exhaust the checker, using a disconnect to stall the endpoint, rolled-back, replayed or substituted updates, a changed or old release policy, updates for another device or from an unlisted key |
+| Stopped | 36 | Edited answers, a proof for a different question, a proof from another model, padded proofs, garbage or oversized messages, answering twice or late, malicious proofs that try to exhaust the checker, using a disconnect to stall the endpoint, rolled-back, replayed or substituted updates, a changed or old release policy, updates for another device or from an unlisted key, overlapping or live installs, a key revocation that didn't stick, a hand-edited state |
 | Allowed on purpose | 2 | The same question gets the same answer again (the server has no choice there); an endpoint set to stop after failures can be stopped by the server |
 | Still works, partly stopped or untested | 8 | Timing (much reduced), failing on purpose, never answering, keeping the endpoint busy, loading the endpoint to delay releases, other services on the standard system, probing the endpoint's rules, restoring a whole older copy of the update store |
 | Out of scope | 2 | Learning the model from many correct answers; physical attacks |
@@ -76,19 +76,23 @@ Pi results: 16 Oct 2026 (v0 software) and 19 Oct 2026 (v1 software), both on the
 
 ## Updates
 
-Signed updates (`docs/UPDATE_SPEC.md`), added 29 Oct. The AI server can't send updates at all: they are applied only by `pge-endpoint --apply-update` while the endpoint isn't serving. These rows are about whoever can hand the device an update directory or edit its store.
+Signed updates (`docs/UPDATE_SPEC.md`), added 29 Oct, revised 30 Oct after an outside review (K45-K48 were its findings). The AI server can't send updates at all: they are applied only by `pge-endpoint --apply-update`, which the store lock keeps from running while the endpoint serves. These rows are about whoever can hand the device an update directory or edit its store; the rollback rows assume the store's unsigned `state` is trusted (see K43 and K48).
 
 | # | Attack | Version | Level | Result | Covered by |
 |---|---|---|---|---|---|
 | K36 | Roll back to an older signed update (lower version) | v1 (software) | shown in tests | blocked: refused rollback | `test_rollback_and_replay_are_refused`, `an_older_version_is_a_rollback` |
 | K37 | Apply a different signed manifest with the current version | v1 (software) | shown in tests | blocked: refused replay; the same manifest again is a no-op | `test_rollback_and_replay_are_refused`, `a_different_manifest_with_the_same_version_is_a_replay` |
-| K38 | Bring back an older key list that still lists a revoked key | v1 (software) | shown in tests | blocked: refused rollback | `test_an_older_key_list_is_refused`, `an_older_key_list_is_a_rollback` |
-| K39 | Key or device confusion: an update for another device, signed by a key the root doesn't list or has removed, by the wrong listed key, or a key list not signed by the root | v1 (software) | shown in tests | blocked: refused device, key or signature | `test_key_and_device_confusion_are_refused` |
+| K38 | Bring back an older key list that still lists a revoked key | v1 (software) | shown in tests | blocked: refused rollback, once the newer list was installed (see K47) | `test_an_older_key_list_is_refused`, `an_older_key_list_is_a_rollback`, `a_revoked_key_stays_revoked_after_rotation` |
+| K39 | Key or device confusion: an update for another device, signed by a key the root doesn't list or has removed, by the wrong listed key, or a key list not signed by the root | v1 (software) | shown in tests | blocked: refused device, key or signature, both when applying and at start-up | `test_key_and_device_confusion_are_refused`, `test_start_up_refuses_another_device`, `start_up_checks_every_part_of_the_store` |
 | K40 | Substitute one file (settings, verification key, setup file, domain) in an otherwise valid update | v1 (software) | shown in tests | blocked: refused bundle | `test_a_substituted_file_is_refused` |
 | K41 | Edit a signed manifest or key list, or write its signature another way | v1 (software) | shown in tests | blocked: refused signature or format | `test_an_edited_manifest_is_refused`, `manifests_have_exactly_one_form`, `signature_files_have_one_form` |
-| K42 | Change the stored files or the state after an update was applied | v1 (software) | shown in tests | blocked: the endpoint refuses to start (`store refused`) | `test_the_endpoint_refuses_a_changed_store` |
-| K43 | Restore a whole older copy of the store (state and files together), e.g. from an old SD card image | v1 (software) | proposed | open: the state lives on the card, so a complete old copy is self-consistent; needs a counter the card can't roll back (TPM, v2) | none yet |
+| K42 | Change one stored file, a signature or one field of the state after an update was applied | v1 (software) | shown in tests | blocked: the endpoint refuses to start (`store refused`: signature, state or bundle); a coordinated rewrite of state and files together is K43 | `test_start_up_refuses_any_change_to_the_store`, `test_the_endpoint_refuses_a_changed_store`, `start_up_checks_every_part_of_the_store` |
+| K43 | Restore a whole older copy of the store (state and files together), e.g. from an old SD card image, or delete the store and apply an old update | v1 (software) | proposed | open: the state is unsigned and lives on the card, so a complete old copy (or an empty store) is self-consistent; needs a counter the card can't roll back (TPM, v2) | none yet |
 | K44 | Change the release policy (release rule, deadline, cap) without a new signed update, or bring back an older policy, e.g. a weaker cap | v1 (software) | shown in tests | blocked: in store mode the policy is read only from the signed manifest, policy flags are refused, and an older manifest is a rollback; out-of-range values are refused (`policy`) | `test_policy_flags_are_refused_in_store_mode`, `test_the_release_policy_comes_from_the_manifest`, `test_an_out_of_range_policy_is_refused` |
+| K45 | Run two installers at once so a lower version commits after a higher one (found by review, 30 Oct) | v1 (software) | shown in tests | blocked: one exclusive store lock from reading the state to the last write; the second installer fails `store busy` | `test_installs_never_overlap` |
+| K46 | Install a new update while the endpoint is serving, so "applied" doesn't mean in use (found by review, 30 Oct) | v1 (software) | shown in tests | blocked: the serving endpoint holds the lock shared, so the installer fails `store busy`; an update takes effect at the next start | `test_no_install_while_the_endpoint_serves` |
+| K47 | Revoke a key with a new key list but an unchanged manifest, so the device reports `same` and keeps the old list (found by review, 30 Oct) | v1 (software) | shown in tests | blocked: a newer key list with the same manifest is installed; a different list under the same version is refused (replay) | `test_a_key_revocation_with_an_unchanged_manifest_takes_effect`, `a_newer_key_list_with_the_same_manifest_is_applied`, `test_a_different_key_list_under_the_same_version_is_refused` |
+| K48 | Edit only the state back to an older version, then apply an older signed update (found by review, 30 Oct) | v1 (software) | shown in tests | blocked: before installing, the stored files must match the state (except to finish an interrupted install of the same manifest), so `refused state` | `test_an_edited_state_does_not_let_an_older_update_in`, `test_an_interrupted_install_can_be_finished` |
 
 ## Out of scope
 
