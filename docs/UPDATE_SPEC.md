@@ -66,9 +66,12 @@ digest <sha256 of the applied manifest>
 ## Running from the store
 `--store STORE --root FILE --device ID` replaces `--bundle`, `--pins` and `--domain`, and the policy flags (`--release`, `--deadline`, `--spin-ms`, `--proof-bytes`, `--max-pending`, `--halt-after`, `--cap-*`); giving any of them with `--store` is an error, because the policy comes from the signed manifest. At start the endpoint checks the stored update from scratch: the key list and manifest signatures, the device, that the manifest is exactly the one the state records (version, key list version and digest; otherwise `state`), and every file's hash (otherwise `bundle`). It then logs `{"result":"update","version":N}` once. Updates are never applied while it serves, so every answer is checked under one update.
 
+## On the device image
+`image/make_update.sh` signs an update on the operator's machine; `image/build.sh` (with `UPDATE` and `ROOT_PUB`) applies it with the device's own binary into a store on a third, writable partition (`/data`, ext4, `noexec`), puts the root public key into the read-only root, and starts the endpoint with `--store /data/pge-store --device pi-1`. Store files are root-owned; the endpoint runs as `pge` and only reads them.
+
 ## What this doesn't do yet
 - **A whole older copy of the store** (state and files together) is consistent with itself, so it is accepted. Stopping that needs a counter the SD card can't roll back: a TPM's monotonic counter (v2).
 - **Freshness in time**: the Pi has no battery clock, so manifests carry no expiry; "fresh" means only "not older than the last applied update".
 - `--idle` (how long a silent client is kept) is still a flag, not part of the signed policy.
 - One signature per manifest; two-party signing (for example the lab and an auditor) is a small extension.
-- No delivery path once SSH is gone; the plan is the serial console or a separate management port.
+- No delivery path on the device yet: a new update means a new image, or running `--apply-update` from the serial console with the update on removable media. A management port or the serial console is the plan.

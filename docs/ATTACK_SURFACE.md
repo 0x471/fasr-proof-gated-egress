@@ -35,6 +35,7 @@ Buildroot 2025.02.18, `image/build.sh` (`242cb4e`), endpoint binary sha256 `3ebf
 | Wi-Fi, Bluetooth | anyone in radio range | drivers are modules that nothing loads and the image ships no Wi-Fi firmware; not verified on the running device |
 | Serial console, HDMI keyboard | physical access | `getty`; root logs in with an empty password (to fix) |
 | SD card and boot | physical access | VideoCore boot firmware (closed), kernel; no secure boot; root file system mounted read-only |
+| Data partition (from 30 Oct image `e498213`) | physical access, or root on the device | the signed update store, checked from scratch at every start (`docs/UPDATE_SPEC.md`); mounted `noexec`; a whole older copy of it is accepted (K43) |
 
 Other services: `syslogd`, `klogd`, `crond` (to remove), `seedrng` (can't save its seed on the read-only root).
 
