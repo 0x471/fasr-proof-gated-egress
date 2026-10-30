@@ -95,6 +95,8 @@ Two fixes made the Rust endpoint faster than the Python one: each check had hash
 
 **The v1 image on the Pi (30 Oct).** The laptop as the AI server, the image's own settings (fixed release, 4 s, 5 ms spin): honest answers 9/9 ok, each received 4001-4003 ms after it was sent; changed outputs 3/3 and garbage frames 3/3 refused (`unavailable`); the endpoint reconnected to a restarted server within about 2 s. Leakage, one run each with the bits of the matrix below: the 1 s timing code gave 11 of 16 bits wrong (answers 4000.8-4001.6 ms); the failure-position code still leaked 16/16 (no cap on this image). These runs overlapped a port scan, so their timing is a smoke check only.
 
+The same pre-registered 512-answer test with a 5 ms spin (`docs/EXPERIMENT_PROTOCOL.md`), repeated on the v1 image (30 Oct): the held-out decoder got 0.49 and 0.52 of answers wrong (p = 0.50, honest control p = 0.69), so under the rule the result is **not detected by this decoder at n = 512**; signal answers were received 0.8-2.3 ms after the release time. The same test was inconclusive on the stock system (Python 20 Oct, Rust 29 Oct). One run each, on different days: this doesn't show the image removed the trace, and a better decoder might still find one. The honest control had six late answers (one 28.6 ms late), cause unknown.
+
 ## The endpoint end to end
 
 | Date | Software | Result |
