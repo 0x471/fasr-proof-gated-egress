@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import subprocess
+import time
 
 import pytest
 
@@ -45,15 +46,18 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+POLICY = "release arrival\ndeadline-ms 5000\nspin-ms 0\nproof-bytes 3072\nmax-pending 32\nhalt none\ncap none\n"
+
+
 def make_update(keys, out, version, *, device="pi-1", key="ops-1", signer=2, keys_version=1, listed=(("ops-1", 2),),
-                root=1, files=None):
+                root=1, files=None, policy=POLICY):
     out.mkdir(parents=True)
     raw = files or {name: (TINY / name).read_bytes() for name in ("settings.json", "vk.key", "domain.json")}
     for name in FILES:
         (out / name).write_bytes(raw[name])
     key_list = f"pge-keys 1\nversion {keys_version}\n" + "".join(f"key {i} {keys.public(n)}\n" for i, n in listed)
     manifest = f"pge-update 1\ndevice {device}\nversion {version}\n" + "".join(
-        f"{name} {sha(raw[name])}\n" for name in FILES) + f"key {key}\n"
+        f"{name} {sha(raw[name])}\n" for name in FILES) + policy + f"key {key}\n"
     (out / "keys").write_text(key_list)
     (out / "keys.sig").write_bytes(keys.sign(root, key_list.encode()))
     (out / "manifest").write_text(manifest)
@@ -146,15 +150,17 @@ def run_endpoint(binary, env, tiny_bundle, work):
         log = work / "endpoint.log"
         proc = await asyncio.create_subprocess_exec(
             binary, "--listen", f"127.0.0.1:{port}", "--server", f"127.0.0.1:{sport}", "--store", env["store"],
-            "--root", env["root"], "--device", "pi-1", "--proof-bytes", "3072", "--deadline", "5", "--log", log,
+            "--root", env["root"], "--device", "pi-1", "--log", log,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         try:
             await asyncio.wait_for(connected.wait(), 10)
             await asyncio.sleep(0.5)
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            sent = time.monotonic()
             writer.write(frame(Wire.for_spec(tiny_bundle.spec).encode_request(7, [TINY_X])))
             await writer.drain()
             reply = Wire.for_spec(tiny_bundle.spec).parse_reply(await asyncio.wait_for(read_frame(reader, 65536), 10))
+            reply["elapsed"] = time.monotonic() - sent
             writer.close()
             records = await log_records(log, lambda r: len(r) >= 2)
         finally:
@@ -175,7 +181,7 @@ def test_the_endpoint_runs_from_the_store(rust_bin, env, tiny_bundle, tmp_path):
 
 def start_fails(binary, env):
     r = subprocess.run([binary, "--listen", f"127.0.0.1:{free_port()}", "--server", "127.0.0.1:9", "--store",
-                        env["store"], "--root", env["root"], "--device", "pi-1", "--proof-bytes", "3072"],
+                        env["store"], "--root", env["root"], "--device", "pi-1"],
                        capture_output=True, text=True, timeout=30)
     return r.returncode, r.stderr.strip()
 
@@ -195,6 +201,26 @@ def test_the_endpoint_refuses_a_changed_store(rust_bin, env):  # noqa: F811
 
 def test_store_and_pinned_flags_do_not_mix(rust_bin, env):  # noqa: F811
     r = subprocess.run([rust_bin, "--listen", "127.0.0.1:1", "--server", "127.0.0.1:2", "--store", env["store"],
-                        "--root", env["root"], "--device", "pi-1", "--pins", "x", "--proof-bytes", "3072"],
+                        "--root", env["root"], "--device", "pi-1", "--pins", "x"],
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 2 and "--store excludes" in r.stderr
+
+
+def test_the_release_policy_comes_from_the_manifest(rust_bin, env, tiny_bundle, tmp_path):  # noqa: F811
+    fixed = POLICY.replace("release arrival", "release fixed").replace("deadline-ms 5000", "deadline-ms 1500")
+    assert apply(rust_bin, env, update(env, "u1", 1, policy=fixed)) == (0, "applied 1")
+    reply, _ = run_endpoint(rust_bin, env, tiny_bundle, tmp_path)
+    assert reply["ok"] and reply["elapsed"] >= 1.5
+
+
+def test_an_out_of_range_policy_is_refused(rust_bin, env):  # noqa: F811
+    bad = POLICY.replace("cap none", "cap 8 8 8")
+    assert apply(rust_bin, env, update(env, "u1", 1, policy=bad)) == (1, "refused policy")
+
+
+@pytest.mark.parametrize("flag", [["--deadline", "1"], ["--release", "fixed"], ["--proof-bytes", "3072"],
+                                  ["--cap-window", "4"]])
+def test_policy_flags_are_refused_in_store_mode(rust_bin, env, flag):  # noqa: F811
+    r = subprocess.run([rust_bin, "--listen", "127.0.0.1:1", "--server", "127.0.0.1:2", "--store", env["store"],
+                        "--root", env["root"], "--device", "pi-1", *flag], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 2 and "policy from the signed manifest" in r.stderr
