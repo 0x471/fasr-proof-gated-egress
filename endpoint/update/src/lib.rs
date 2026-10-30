@@ -97,6 +97,7 @@ impl Settings {
 pub struct State {
     pub version: u64,
     pub keys: u64,
+    pub keys_digest: String,
     pub digest: String,
 }
 
@@ -288,19 +289,20 @@ impl Manifest {
 impl State {
     pub fn parse(raw: &[u8]) -> Result<Self> {
         let lines = lines(raw, "pge-state 1")?;
-        if lines.len() != 3 {
+        if lines.len() != 4 {
             return Err(Refusal::Format);
         }
         Ok(Self {
             version: number(field(lines.first(), "version", 1)?[0])?,
             keys: number(field(lines.get(1), "keys", 1)?[0])?,
-            digest: hex(field(lines.get(2), "digest", 1)?[0], 64)?.to_owned(),
+            keys_digest: hex(field(lines.get(2), "keys-digest", 1)?[0], 64)?.to_owned(),
+            digest: hex(field(lines.get(3), "digest", 1)?[0], 64)?.to_owned(),
         })
     }
     pub fn text(&self) -> String {
         format!(
-            "pge-state 1\nversion {}\nkeys {}\ndigest {}\n",
-            self.version, self.keys, self.digest
+            "pge-state 1\nversion {}\nkeys {}\nkeys-digest {}\ndigest {}\n",
+            self.version, self.keys, self.keys_digest, self.digest
         )
     }
 }
@@ -330,16 +332,23 @@ pub fn decide(
         return Err(Refusal::Device);
     }
     let digest = sha256(update.manifest);
+    let keys_digest = sha256(update.keys);
     if let Some(s) = state {
         if keys.version < s.keys || manifest.version < s.version {
             return Err(Refusal::Rollback);
         }
+        // One key list per version: a different list under a recorded version is refused.
+        if keys.version == s.keys && keys_digest != s.keys_digest {
+            return Err(Refusal::Replay);
+        }
         if manifest.version == s.version {
-            return if digest == s.digest {
-                Ok(Outcome::Same)
-            } else {
-                Err(Refusal::Replay)
-            };
+            if digest != s.digest {
+                return Err(Refusal::Replay);
+            }
+            if keys.version == s.keys {
+                return Ok(Outcome::Same);
+            }
+            // The same manifest with a newer key list rotates or revokes keys: apply it.
         }
     }
     manifest.settings.policy()?;
@@ -354,6 +363,7 @@ pub fn decide(
     Ok(Outcome::Apply(State {
         version: manifest.version,
         keys: keys.version,
+        keys_digest,
         digest,
     }))
 }
@@ -374,6 +384,7 @@ pub fn active(
         return Err(Refusal::Device);
     }
     if keys.version != state.keys
+        || sha256(update.keys) != state.keys_digest
         || manifest.version != state.version
         || sha256(update.manifest) != state.digest
     {

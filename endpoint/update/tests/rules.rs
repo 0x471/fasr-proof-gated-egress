@@ -1,5 +1,5 @@
 use k256::ecdsa::{signature::Signer, Signature, SigningKey};
-use pge_update::{decide, sha256, Manifest, Outcome, Refusal, State, Update};
+use pge_update::{active, decide, sha256, Manifest, Outcome, Refusal, State, Update};
 
 fn key(n: u8) -> SigningKey {
     SigningKey::from_slice(&[n; 32]).unwrap()
@@ -62,6 +62,21 @@ impl Case {
             files: self.files,
         };
         decide(key(1).verifying_key(), "pi-1", state, &update)
+    }
+    fn start(&self, device: &str, state: &State) -> Result<Manifest, Refusal> {
+        let update = Update {
+            keys: &self.keys,
+            keys_signature: &self.keys_sig,
+            manifest: &self.manifest,
+            manifest_signature: &self.manifest_sig,
+            files: self.files,
+        };
+        active(key(1).verifying_key(), device, state, &update)
+    }
+    fn with_keys(mut self, version: u64, keys: &[(&str, &SigningKey)]) -> Self {
+        self.keys = keys_text(version, keys);
+        self.keys_sig = sign(&key(1), &self.keys);
+        self
     }
 }
 
@@ -291,4 +306,82 @@ fn policy_lines_have_one_form() {
             .as_bytes()
     )
     .is_ok());
+}
+
+#[test]
+fn a_newer_key_list_with_the_same_manifest_is_applied() {
+    let both = Case::new(1).with_keys(1, &[("ops-1", &key(2)), ("ops-2", &key(3))]);
+    let now = state_after(&both);
+    let rotated = Case::new(1).with_keys(2, &[("ops-1", &key(2))]);
+    match rotated.run(Some(&now)) {
+        Ok(Outcome::Apply(s)) => assert_eq!((s.version, s.keys, s.digest), (1, 2, now.digest)),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_revoked_key_stays_revoked_after_rotation() {
+    let both = Case::new(1).with_keys(1, &[("ops-1", &key(2)), ("ops-2", &key(3))]);
+    let rotated = Case::new(1).with_keys(2, &[("ops-1", &key(2))]);
+    let now = match rotated.run(Some(&state_after(&both))) {
+        Ok(Outcome::Apply(s)) => s,
+        other => panic!("{other:?}"),
+    };
+    let mut old_list = Case::new(2).with_keys(1, &[("ops-1", &key(2)), ("ops-2", &key(3))]);
+    old_list.manifest = manifest_text("pi-1", 2, FILES, "ops-2");
+    old_list.manifest_sig = sign(&key(3), &old_list.manifest);
+    assert_eq!(old_list.run(Some(&now)), Err(Refusal::Rollback));
+    let mut new_list = Case::new(2).with_keys(2, &[("ops-1", &key(2))]);
+    new_list.manifest = manifest_text("pi-1", 2, FILES, "ops-2");
+    new_list.manifest_sig = sign(&key(3), &new_list.manifest);
+    assert_eq!(new_list.run(Some(&now)), Err(Refusal::Key));
+}
+
+#[test]
+fn a_different_key_list_under_the_same_version_is_refused() {
+    let now = state_after(&Case::new(1));
+    let other = Case::new(2).with_keys(1, &[("ops-1", &key(2)), ("ops-2", &key(3))]);
+    assert_eq!(other.run(Some(&now)), Err(Refusal::Replay));
+}
+
+#[test]
+fn start_up_checks_every_part_of_the_store() {
+    let case = Case::new(3);
+    let good = state_after(&case);
+    assert!(case.start("pi-1", &good).is_ok());
+    assert_eq!(case.start("pi-2", &good), Err(Refusal::Device));
+    let mut bad_sig = Case::new(3);
+    bad_sig.manifest_sig = sign(&key(3), &bad_sig.manifest);
+    assert_eq!(bad_sig.start("pi-1", &good), Err(Refusal::Signature));
+    let mut bad_root = Case::new(3);
+    bad_root.keys_sig = sign(&key(2), &bad_root.keys);
+    assert_eq!(bad_root.start("pi-1", &good), Err(Refusal::Signature));
+    let zero = "0".repeat(64);
+    for state in [
+        State {
+            version: 2,
+            ..good.clone()
+        },
+        State {
+            keys: 2,
+            ..good.clone()
+        },
+        State {
+            digest: zero.clone(),
+            ..good.clone()
+        },
+        State {
+            keys_digest: zero.clone(),
+            ..good.clone()
+        },
+    ] {
+        assert_eq!(case.start("pi-1", &state), Err(Refusal::State), "{state:?}");
+    }
+    for i in 0..4 {
+        let mut c = Case::new(3);
+        let mut files = FILES;
+        files[i] = b"changed";
+        c.files = files;
+        assert_eq!(c.start("pi-1", &good), Err(Refusal::Bundle), "file {i}");
+    }
 }
