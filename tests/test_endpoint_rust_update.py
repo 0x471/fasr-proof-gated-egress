@@ -1,6 +1,7 @@
 """Signed updates through the Rust binary: every refusal rule, and an endpoint that runs from the store."""
 import asyncio
 import hashlib
+import shutil
 import subprocess
 import time
 
@@ -92,7 +93,8 @@ def test_a_valid_update_applies_once(rust_bin, env):  # noqa: F811
     assert apply(rust_bin, env, first) == (0, "applied 1")
     assert apply(rust_bin, env, first) == (0, "same")
     state = (env["store"] / "state").read_text()
-    assert state == f"pge-state 1\nversion 1\nkeys 1\ndigest {sha((first / 'manifest').read_bytes())}\n"
+    assert state == (f"pge-state 1\nversion 1\nkeys 1\nkeys-digest {sha((first / 'keys').read_bytes())}\n"
+                     f"digest {sha((first / 'manifest').read_bytes())}\n")
     assert sorted(p.name for p in (env["store"] / "active").iterdir()) == sorted(
         FILES + ("keys", "keys.sig", "manifest", "manifest.sig"))
     assert apply(rust_bin, env, update(env, "u2", 2)) == (0, "applied 2")
@@ -224,3 +226,120 @@ def test_policy_flags_are_refused_in_store_mode(rust_bin, env, flag):  # noqa: F
     r = subprocess.run([rust_bin, "--listen", "127.0.0.1:1", "--server", "127.0.0.1:2", "--store", env["store"],
                         "--root", env["root"], "--device", "pi-1", *flag], capture_output=True, text=True, timeout=30)
     assert r.returncode == 2 and "policy from the signed manifest" in r.stderr
+
+
+def run_apply(binary, env, update_dir, device="pi-1"):
+    return subprocess.run([binary, "--apply-update", update_dir, "--root", env["root"], "--device", device,
+                           "--store", env["store"]], capture_output=True, text=True, timeout=30)
+
+
+def serving(binary, env, device="pi-1"):
+    """Starts the endpoint from the store; returns the process if it is still running after a moment."""
+    proc = subprocess.Popen([binary, "--listen", f"127.0.0.1:{free_port()}", "--server", "127.0.0.1:9", "--store",
+                             env["store"], "--root", env["root"], "--device", device],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    try:
+        proc.wait(timeout=1.5)
+    except subprocess.TimeoutExpired:
+        return proc
+    return None
+
+
+def test_no_install_while_the_endpoint_serves(rust_bin, env):  # noqa: F811
+    assert apply(rust_bin, env, update(env, "u1", 1)) == (0, "applied 1")
+    u2 = update(env, "u2", 2)
+    proc = serving(rust_bin, env)
+    assert proc is not None
+    try:
+        r = run_apply(rust_bin, env, u2)
+        assert (r.returncode, r.stdout, r.stderr.strip()) == (2, "", "apply-update error: store busy")
+    finally:
+        proc.terminate()
+        proc.wait()
+    assert apply(rust_bin, env, u2) == (0, "applied 2")
+
+
+def test_installs_never_overlap(rust_bin, env):  # noqa: F811
+    import fcntl
+    assert apply(rust_bin, env, update(env, "u1", 1)) == (0, "applied 1")
+    u2 = update(env, "u2", 2)
+    with open(env["store"] / "lock") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        r = run_apply(rust_bin, env, u2)
+        assert (r.returncode, r.stderr.strip()) == (2, "apply-update error: store busy")
+        assert serving(rust_bin, env) is None
+    assert apply(rust_bin, env, u2) == (0, "applied 2")
+
+
+def test_a_key_revocation_with_an_unchanged_manifest_takes_effect(rust_bin, env):  # noqa: F811
+    both = (("ops-1", 2), ("ops-2", 3))
+    assert apply(rust_bin, env, update(env, "k1", 1, listed=both)) == (0, "applied 1")
+    assert apply(rust_bin, env, update(env, "k2", 1, keys_version=2, listed=(("ops-1", 2),))) == (0, "applied 1")
+    assert "keys 2\n" in (env["store"] / "state").read_text()
+    assert apply(rust_bin, env, update(env, "old", 2, key="ops-2", signer=3, listed=both)) == (1, "refused rollback")
+    assert apply(rust_bin, env, update(env, "new", 2, key="ops-2", signer=3, keys_version=2,
+                                       listed=(("ops-1", 2),))) == (1, "refused key")
+
+
+def test_a_different_key_list_under_the_same_version_is_refused(rust_bin, env):  # noqa: F811
+    assert apply(rust_bin, env, update(env, "u1", 1)) == (0, "applied 1")
+    other = update(env, "u2", 2, listed=(("ops-1", 2), ("ops-2", 3)))
+    assert apply(rust_bin, env, other) == (1, "refused replay")
+
+
+def edit(path, old, new):
+    text = path.read_text()
+    assert old in text
+    path.write_text(text.replace(old, new))
+
+
+@pytest.mark.parametrize("change,word", [
+    (lambda a, s: (a / "manifest.sig").write_text("00" * 64 + "\n"), "signature"),
+    (lambda a, s: (a / "keys.sig").write_text("00" * 64 + "\n"), "signature"),
+    (lambda a, s: edit(s, "version 1", "version 2"), "state"),
+    (lambda a, s: edit(s, "keys 1", "keys 2"), "state"),
+    (lambda a, s: s.write_text(re_digest(s.read_text(), "digest")), "state"),
+    (lambda a, s: s.write_text(re_digest(s.read_text(), "keys-digest")), "state"),
+] + [(lambda a, s, f=f: (a / f).write_bytes((a / f).read_bytes() + b" "), "bundle") for f in FILES])
+def test_start_up_refuses_any_change_to_the_store(rust_bin, env, change, word):  # noqa: F811
+    assert apply(rust_bin, env, update(env, "u1", 1)) == (0, "applied 1")
+    proc = serving(rust_bin, env)
+    assert proc is not None
+    proc.terminate()
+    proc.wait()
+    change(env["store"] / "active", env["store"] / "state")
+    assert start_fails(rust_bin, env) == (2, f"endpoint startup/runtime error: store refused: {word}")
+
+
+def re_digest(text, field):
+    lines = text.splitlines(keepends=True)
+    return "".join(f"{field} {'0' * 64}\n" if line.startswith(field + " ") else line for line in lines)
+
+
+def test_start_up_refuses_another_device(rust_bin, env):  # noqa: F811
+    assert apply(rust_bin, env, update(env, "u1", 1)) == (0, "applied 1")
+    assert serving(rust_bin, env, device="pi-2") is None
+    r = subprocess.run([rust_bin, "--listen", f"127.0.0.1:{free_port()}", "--server", "127.0.0.1:9", "--store",
+                        env["store"], "--root", env["root"], "--device", "pi-2"], capture_output=True, text=True,
+                       timeout=30)
+    assert (r.returncode, r.stderr.strip()) == (2, "endpoint startup/runtime error: store refused: device")
+
+
+def test_an_edited_state_does_not_let_an_older_update_in(rust_bin, env):  # noqa: F811
+    assert apply(rust_bin, env, update(env, "u3", 3)) == (0, "applied 3")
+    edit(env["store"] / "state", "version 3", "version 1")
+    assert apply(rust_bin, env, update(env, "u2", 2)) == (1, "refused state")
+
+
+def test_an_interrupted_install_can_be_finished(rust_bin, env):  # noqa: F811
+    assert apply(rust_bin, env, update(env, "u1", 1)) == (0, "applied 1")
+    u2 = update(env, "u2", 2)
+    shutil.rmtree(env["store"] / "active")
+    shutil.copytree(u2, env["store"] / "active")
+    assert start_fails(rust_bin, env) == (2, "endpoint startup/runtime error: store refused: state")
+    assert apply(rust_bin, env, update(env, "u3", 3)) == (1, "refused state")
+    assert apply(rust_bin, env, u2) == (0, "applied 2")
+    proc = serving(rust_bin, env)
+    assert proc is not None
+    proc.terminate()
+    proc.wait()
