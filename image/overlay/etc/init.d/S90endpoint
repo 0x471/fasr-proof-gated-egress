@@ -2,8 +2,9 @@
 # Starts the endpoint at boot as the unprivileged user pge; the log goes to tmpfs.
 DAEMON=/usr/bin/pge-endpoint
 PIDFILE=/var/run/endpoint.pid
-ARGS="--listen 192.168.2.2:8700 --server 192.168.2.1:8701 --bundle /etc/pge/bundle --pins /etc/pge/pins.sha256 \
---domain /etc/pge/domain.json --proof-bytes 3072 --deadline 4 --release fixed --spin-ms 5 --log /var/log/endpoint.log"
+# The model and the release policy come from the signed update store on the data partition.
+ARGS="--listen 192.168.2.2:8700 --server 192.168.2.1:8701 --store /data/pge-store --root /etc/pge/root.pub \
+--device pi-1 --log /var/log/endpoint.log"
 
 case "$1" in
 	start)
