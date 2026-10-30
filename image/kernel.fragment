@@ -1,0 +1,5 @@
+# Built in, not modules: nothing on the image loads modules, and the firewall must exist before the network.
+CONFIG_NF_CONNTRACK=y
+CONFIG_NF_TABLES=y
+CONFIG_NF_TABLES_IPV4=y
+CONFIG_NFT_CT=y

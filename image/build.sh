@@ -46,6 +46,8 @@ make -C "$BR" O="$WORK/out" raspberrypi4_64_defconfig
   echo "BR2_ROOTFS_OVERLAY=\"$HERE/overlay $STAGE\""
   echo "BR2_ROOTFS_USERS_TABLES=\"$HERE/users.txt\""
   echo "BR2_ROOTFS_POST_IMAGE_SCRIPT=\"board/raspberrypi4-64/post-image.sh $HERE/post-image.sh\""
+  echo "BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES=\"$HERE/kernel.fragment\""
+  echo "BR2_ROOTFS_POST_BUILD_SCRIPT=\"board/raspberrypi4-64/post-build.sh $HERE/post-build.sh\""
 } > "$WORK/fragment"
 cat "$WORK/fragment" >> "$WORK/out/.config"
 make -C "$BR" O="$WORK/out" olddefconfig
@@ -55,4 +57,8 @@ grep -E '^BR2_' "$WORK/fragment" | while read -r line; do
 done
 grep -qx '# BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW is not set' "$WORK/out/.config" || { echo "root filesystem would be writable" >&2; exit 1; }
 make -C "$BR" O="$WORK/out"
+# Buildroot doesn't rebuild an already built kernel when the fragment changes; check it took effect.
+grep -E '^CONFIG_' "$HERE/kernel.fragment" | while read -r line; do
+  grep -qxF "$line" "$WORK/out/build/linux-custom/.config" || { echo "kernel lacks $line: make linux-reconfigure" >&2; exit 1; }
+done
 sha256sum "$WORK/out/images/sdcard.img"
