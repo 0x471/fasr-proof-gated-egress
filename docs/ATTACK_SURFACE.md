@@ -37,7 +37,9 @@ Buildroot 2025.02.18, `image/build.sh` (`242cb4e`), endpoint binary sha256 `3ebf
 | SD card and boot | physical access | VideoCore boot firmware (closed), kernel; no secure boot; root file system mounted read-only |
 | Data partition (from 30 Oct image `e498213`) | physical access, or root on the device | the signed update store, checked from scratch at every start (`docs/UPDATE_SPEC.md`); mounted `noexec`; a whole older copy of it is accepted (K43) |
 
-Other services: `syslogd`, `klogd`, `crond` (to remove), `seedrng` (can't save its seed on the read-only root).
+Other services: `syslogd`, `klogd`, `crond` (removed from `abb7d3b`), `seedrng` (can't save its seed on the read-only root).
+
+**Next image (`abb7d3b`, built 30 Oct, not booted yet):** netfilter built into the kernel and an `nftables` rule set loaded before the network: in, only new TCP connections to 8700 from 192.168.2.0/24; out, only new TCP connections to the server (192.168.2.1:8701); everything else dropped, ping included. The endpoint refuses to start if the rules aren't loaded. The rule set loaded cleanly in a Linux network namespace; it hasn't run on the Pi.
 
 **Scan artefacts.** Homebrew `nmap` on the laptop is blocked by macOS's Local Network permission (every port "host-unreach"); scans used Apple's Python instead. Parallel scans also time out on contiguous port ranges; those ports re-probed one at a time were closed. The 691 "filtered" ports on v0 (29 Oct) are most likely the same artefact.
 
