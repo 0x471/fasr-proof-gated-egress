@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build the device image with Buildroot on a Linux host (Buildroot does not build on macOS).
 # Usage: image/build.sh [WORKDIR]   (default ~/p01-image); the image ends up in WORKDIR/out/images/sdcard.img
-# BIN is the static aarch64 endpoint (default: the CI artifact under endpoint/target) and PGE_SRS the
-# pinned setup file (default prover/artifacts/kzg.srs); both go into the image with the tiny bundle.
+# BIN is the static aarch64 endpoint (default: the CI artifact under endpoint/target). UPDATE is a
+# signed update (image/make_update.sh) and ROOT_PUB the root public key: the update is applied into the
+# store on a writable data partition, and the key goes into the read-only root.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${1:-$HOME/p01-image}"
@@ -16,28 +17,35 @@ PATH="$(tr ':' '\n' <<<"$PATH" | grep -v '/\.cargo/bin' | paste -sd: -)"
 export PATH
 REPO="$(cd "$HERE/.." && pwd)"
 BIN="${BIN:-$REPO/endpoint/target/aarch64-unknown-linux-musl/release/pge-endpoint}"
-SRS="${PGE_SRS:-$REPO/prover/artifacts/kzg.srs}"
+UPDATE="${UPDATE:?signed update directory (image/make_update.sh)}"
+ROOT_PUB="${ROOT_PUB:?root public key file}"
+DEVICE="${DEVICE:-pi-1}"
 mkdir -p "$WORK/dl"
 STAGE="$WORK/stage"
 rm -rf "$STAGE"
-mkdir -p "$STAGE/usr/bin" "$STAGE/etc/pge/bundle"
+mkdir -p "$STAGE/usr/bin" "$STAGE/etc/pge" "$STAGE/data"
 install -m 0755 "$BIN" "$STAGE/usr/bin/pge-endpoint"
-install -m 0644 "$REPO/tests/fixtures/tiny/settings.json" "$REPO/tests/fixtures/tiny/vk.key" "$STAGE/etc/pge/bundle/"
-install -m 0644 "$SRS" "$STAGE/etc/pge/bundle/kzg.srs"
-install -m 0644 "$REPO/device/tiny.sha256" "$STAGE/etc/pge/pins.sha256"
-install -m 0644 "$REPO/tests/fixtures/tiny/domain.json" "$STAGE/etc/pge/domain.json"
-# The endpoint refuses to start on a bundle that doesn't match its pins; fail here instead.
-(cd "$STAGE/etc/pge/bundle" && sha256sum -c ../pins.sha256)
+install -m 0644 "$ROOT_PUB" "$STAGE/etc/pge/root.pub"
+# Apply the update exactly as the device would, so the image starts with a checked store.
+export PGE_DATA="$WORK/data"
+rm -rf "$PGE_DATA"
+umask 022
+mkdir -p "$PGE_DATA/pge-store"
+[ "$("$BIN" --apply-update "$UPDATE" --root "$ROOT_PUB" --device "$DEVICE" --store "$PGE_DATA/pge-store")" = "applied $(sed -n 's/^version //p' "$UPDATE/manifest")" ] \
+  || { echo "update not applied" >&2; exit 1; }
 sha256sum "$STAGE/usr/bin/pge-endpoint"
 cd "$WORK"
 [ -f "$BR.tar.xz" ] || curl -sSL --fail -o "$BR.tar.xz" "https://buildroot.org/downloads/$BR.tar.xz"
 echo "$BR_SHA  $BR.tar.xz" | sha256sum -c -
 [ -d "$BR" ] || tar -xJf "$BR.tar.xz"
 export BR2_DL_DIR="$WORK/dl"
+# Buildroot never removes files an earlier overlay installed; clear ours so a rebuild holds only this one.
+rm -rf "$WORK/out/target/etc/pge" "$WORK/out/target/data"
 make -C "$BR" O="$WORK/out" raspberrypi4_64_defconfig
 { cat "$HERE/v1.fragment"
   echo "BR2_ROOTFS_OVERLAY=\"$HERE/overlay $STAGE\""
   echo "BR2_ROOTFS_USERS_TABLES=\"$HERE/users.txt\""
+  echo "BR2_ROOTFS_POST_IMAGE_SCRIPT=\"board/raspberrypi4-64/post-image.sh $HERE/post-image.sh\""
 } > "$WORK/fragment"
 cat "$WORK/fragment" >> "$WORK/out/.config"
 make -C "$BR" O="$WORK/out" olddefconfig
