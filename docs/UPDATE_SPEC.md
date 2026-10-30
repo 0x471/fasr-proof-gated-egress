@@ -27,8 +27,16 @@ settings.json <sha256>
 vk.key <sha256>
 kzg.srs <sha256>
 domain.json <sha256>
+release fixed
+deadline-ms 4000
+spin-ms 5
+proof-bytes 3072
+max-pending 32
+halt none
+cap 64 1 64
 key ops-1
 ```
+The policy lines set the endpoint's release rule (`arrival` or `fixed`), deadline, spin, proof length, queue limit, halt (`none` or a count) and failure cap (`none` or window, failures, cooldown). They are signed with the model, so the policy can't be changed or rolled back on its own.
 
 `keys.sig`, `manifest.sig`: ECDSA over secp256k1 with SHA-256, the 64-byte (r, s) signature in lowercase hex and a newline. High-s signatures are refused. `endpoint/update/src/bin/pge-sign.rs` makes them (offline, never on the device).
 
@@ -50,16 +58,17 @@ digest <sha256 of the applied manifest>
 | manifest for this device (`--device`) | `device` |
 | key list version not below the state's, manifest version not below the state's | `rollback` |
 | same manifest version as the state: the same manifest is a no-op (`same`), another one is refused | `replay` |
+| policy values in range (the same limits as the command-line flags) | `policy` |
 | every file's hash equals the manifest | `bundle` |
 
 `pge-endpoint --apply-update DIR --root FILE --device ID --store STORE` prints `applied N`, `same` or `refused WORD` and exits 0, 0 or 1 (2 for an error such as a missing file). Applying copies the update into `STORE/next`, syncs it, swaps it in as `STORE/active`, then writes `STORE/state` the same way. The state is written last, so a crash in between leaves the two disagreeing and the endpoint refuses to start until the update is applied again.
 
 ## Running from the store
-`--store STORE --root FILE --device ID` replaces `--bundle`, `--pins` and `--domain` (mixing them is an error). At start the endpoint checks the stored update from scratch: the key list and manifest signatures, the device, that the manifest is exactly the one the state records (version, key list version and digest; otherwise `state`), and every file's hash (otherwise `bundle`). It then logs `{"result":"update","version":N}` once. Updates are never applied while it serves, so every answer is checked under one update.
+`--store STORE --root FILE --device ID` replaces `--bundle`, `--pins` and `--domain`, and the policy flags (`--release`, `--deadline`, `--spin-ms`, `--proof-bytes`, `--max-pending`, `--halt-after`, `--cap-*`); giving any of them with `--store` is an error, because the policy comes from the signed manifest. At start the endpoint checks the stored update from scratch: the key list and manifest signatures, the device, that the manifest is exactly the one the state records (version, key list version and digest; otherwise `state`), and every file's hash (otherwise `bundle`). It then logs `{"result":"update","version":N}` once. Updates are never applied while it serves, so every answer is checked under one update.
 
 ## What this doesn't do yet
 - **A whole older copy of the store** (state and files together) is consistent with itself, so it is accepted. Stopping that needs a counter the SD card can't roll back: a TPM's monotonic counter (v2).
 - **Freshness in time**: the Pi has no battery clock, so manifests carry no expiry; "fresh" means only "not older than the last applied update".
-- The release policy (deadline, release rule, cap) is still set by command-line flags, not by the signed manifest.
+- `--idle` (how long a silent client is kept) is still a flag, not part of the signed policy.
 - One signature per manifest; two-party signing (for example the lab and an auditor) is a small extension.
 - No delivery path once SSH is gone; the plan is the serial console or a separate management port.
