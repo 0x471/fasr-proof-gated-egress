@@ -1,0 +1,14 @@
+#!/bin/sh
+# Loads the rules before the network comes up (S40). The endpoint won't start without them (S90).
+case "$1" in
+	start)
+		printf "Loading firewall: "
+		/usr/sbin/nft -f /etc/nftables.conf && echo OK || echo FAIL
+		;;
+	stop)
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac

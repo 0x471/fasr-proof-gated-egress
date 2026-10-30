@@ -9,6 +9,7 @@ ARGS="--listen 192.168.2.2:8700 --server 192.168.2.1:8701 --store /data/pge-stor
 case "$1" in
 	start)
 		printf "Starting endpoint: "
+		/usr/sbin/nft list table ip pge >/dev/null 2>&1 || { echo "FAIL (no firewall)"; exit 1; }
 		start-stop-daemon -S -b -m -p "$PIDFILE" -c pge -x "$DAEMON" -- $ARGS && echo OK || echo FAIL
 		;;
 	stop)
