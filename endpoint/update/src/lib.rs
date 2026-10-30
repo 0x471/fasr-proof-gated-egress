@@ -23,6 +23,7 @@ pub enum Refusal {
     Replay,
     Bundle,
     State,
+    Policy,
 }
 impl Refusal {
     pub fn word(self) -> &'static str {
@@ -35,6 +36,7 @@ impl Refusal {
             Self::Replay => "replay",
             Self::Bundle => "bundle",
             Self::State => "state",
+            Self::Policy => "policy",
         }
     }
 }
@@ -45,7 +47,50 @@ pub struct Manifest {
     pub device: String,
     pub version: u64,
     pub files: [String; 4],
+    pub settings: Settings,
     pub key: String,
+}
+
+/// The endpoint's policy, signed with the model so it can't be changed or rolled back alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settings {
+    pub fixed: bool,
+    pub deadline_ms: u64,
+    pub spin_ms: u64,
+    pub proof_bytes: u64,
+    pub max_pending: u64,
+    pub halt: Option<u64>,
+    pub cap: Option<(u64, u64, u64)>,
+}
+impl Settings {
+    /// The core policy and the exact proof length, or `Policy` if the values are out of range.
+    pub fn policy(&self) -> Result<(pge_core::Policy, usize)> {
+        let ms = |v: u64| v.checked_mul(1_000_000).ok_or(Refusal::Policy);
+        let mode = if self.fixed {
+            pge_core::Mode::Fixed
+        } else {
+            pge_core::Mode::Arrival
+        };
+        let capacity = usize::try_from(self.max_pending).map_err(|_| Refusal::Policy)?;
+        let mut policy = pge_core::Policy::new(
+            ms(self.deadline_ms)?,
+            capacity,
+            self.halt,
+            mode,
+            ms(self.spin_ms)?,
+        )
+        .map_err(|_| Refusal::Policy)?;
+        if let Some((w, f, c)) = self.cap {
+            let n = |v: u64| u32::try_from(v).map_err(|_| Refusal::Policy);
+            policy = policy
+                .with_cap(pge_core::Cap::new(n(w)?, n(f)?, n(c)?).map_err(|_| Refusal::Policy)?);
+        }
+        let proof_bytes = usize::try_from(self.proof_bytes).map_err(|_| Refusal::Policy)?;
+        if !(1..=65536).contains(&proof_bytes) {
+            return Err(Refusal::Policy);
+        }
+        Ok((policy, proof_bytes))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +154,14 @@ fn number(s: &str) -> Result<u64> {
         return Err(Refusal::Format);
     }
     s.parse().map_err(|_| Refusal::Format)
+}
+
+fn number0(s: &str) -> Result<u64> {
+    if s == "0" {
+        Ok(0)
+    } else {
+        number(s)
+    }
 }
 
 fn hex(s: &str, len: usize) -> Result<&str> {
@@ -185,7 +238,7 @@ impl Keys {
 impl Manifest {
     pub fn parse(raw: &[u8]) -> Result<Self> {
         let lines = lines(raw, "pge-update 1")?;
-        if lines.len() != 7 {
+        if lines.len() != 14 {
             return Err(Refusal::Format);
         }
         let device = name(field(lines.first(), "device", 1)?[0])?.to_owned();
@@ -194,11 +247,39 @@ impl Manifest {
         for (i, f) in FILES.iter().enumerate() {
             files[i] = hex(field(lines.get(2 + i), f, 1)?[0], 64)?.to_owned();
         }
-        let key = name(field(lines.get(6), "key", 1)?[0])?.to_owned();
+        let fixed = match field(lines.get(6), "release", 1)?[0] {
+            "arrival" => false,
+            "fixed" => true,
+            _ => return Err(Refusal::Format),
+        };
+        let one = |i: usize, k: &str| -> Result<u64> { number(field(lines.get(i), k, 1)?[0]) };
+        let deadline_ms = one(7, "deadline-ms")?;
+        let spin_ms = number0(field(lines.get(8), "spin-ms", 1)?[0])?;
+        let proof_bytes = one(9, "proof-bytes")?;
+        let max_pending = one(10, "max-pending")?;
+        let halt = match field(lines.get(11), "halt", 1)?[0] {
+            "none" => None,
+            n => Some(number(n)?),
+        };
+        let cap = match lines.get(12).map(Vec::as_slice) {
+            Some(["cap", "none"]) => None,
+            Some(["cap", w, f, c]) => Some((number(w)?, number0(f)?, number(c)?)),
+            _ => return Err(Refusal::Format),
+        };
+        let key = name(field(lines.get(13), "key", 1)?[0])?.to_owned();
         Ok(Self {
             device,
             version,
             files,
+            settings: Settings {
+                fixed,
+                deadline_ms,
+                spin_ms,
+                proof_bytes,
+                max_pending,
+                halt,
+                cap,
+            },
             key,
         })
     }
@@ -261,6 +342,7 @@ pub fn decide(
             };
         }
     }
+    manifest.settings.policy()?;
     if update
         .files
         .iter()
@@ -297,6 +379,7 @@ pub fn active(
     {
         return Err(Refusal::State);
     }
+    manifest.settings.policy()?;
     if update
         .files
         .iter()

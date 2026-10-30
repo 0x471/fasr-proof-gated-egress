@@ -4,5 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+pge-core = { path = "../core" }
 k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 sha2.workspace = true

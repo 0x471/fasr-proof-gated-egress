@@ -1110,6 +1110,7 @@ name = "pge-update"
 version = "0.1.0"
 dependencies = [
  "k256",
+ "pge-core",
  "sha2",
 ]
 

@@ -21,10 +21,11 @@ fn keys_text(version: u64, keys: &[(&str, &SigningKey)]) -> Vec<u8> {
     }
     s.into_bytes()
 }
+const POLICY: &str = "release fixed\ndeadline-ms 4000\nspin-ms 5\nproof-bytes 3072\nmax-pending 32\nhalt none\ncap 64 1 64\n";
 const FILES: [&[u8]; 4] = [b"settings", b"vk", b"srs", b"domain"];
 fn manifest_text(device: &str, version: u64, files: [&[u8]; 4], key: &str) -> Vec<u8> {
     format!(
-        "pge-update 1\ndevice {device}\nversion {version}\nsettings.json {}\nvk.key {}\nkzg.srs {}\ndomain.json {}\nkey {key}\n",
+        "pge-update 1\ndevice {device}\nversion {version}\nsettings.json {}\nvk.key {}\nkzg.srs {}\ndomain.json {}\n{POLICY}key {key}\n",
         sha256(files[0]),
         sha256(files[1]),
         sha256(files[2]),
@@ -235,4 +236,59 @@ fn key_lists_must_be_sorted_and_unique() {
         case.keys = keys;
         assert_eq!(case.run(None), Err(Refusal::Format));
     }
+}
+
+#[test]
+fn the_policy_is_part_of_the_signed_manifest() {
+    let m = Manifest::parse(&manifest_text("pi-1", 3, FILES, "ops-1")).unwrap();
+    let (policy, proof_bytes) = m.settings.policy().unwrap();
+    assert_eq!(
+        (policy.deadline, policy.spin, policy.capacity, proof_bytes),
+        (4_000_000_000, 5_000_000, 32, 3072)
+    );
+    assert!(policy.cap.is_some() && policy.halt_after.is_none());
+}
+
+#[test]
+fn out_of_range_policies_are_refused_even_when_signed() {
+    for (from, to) in [
+        ("cap 64 1 64", "cap 64 64 64"),
+        ("spin-ms 5", "spin-ms 51"),
+        ("proof-bytes 3072", "proof-bytes 70000"),
+        ("max-pending 32", "max-pending 5000"),
+        ("deadline-ms 4000", "deadline-ms 3600001"),
+    ] {
+        let mut case = Case::new(3);
+        case.manifest = String::from_utf8(case.manifest)
+            .unwrap()
+            .replace(from, to)
+            .into_bytes();
+        case.manifest_sig = sign(&key(2), &case.manifest);
+        assert_eq!(case.run(None), Err(Refusal::Policy), "{to}");
+    }
+}
+
+#[test]
+fn policy_lines_have_one_form() {
+    let good = String::from_utf8(manifest_text("pi-1", 3, FILES, "ops-1")).unwrap();
+    for (from, to) in [
+        ("release fixed", "release immediate"),
+        ("spin-ms 5", "spin-ms 05"),
+        ("halt none", "halt 0"),
+        ("cap 64 1 64", "cap 64 1"),
+        ("cap 64 1 64", "cap"),
+        ("deadline-ms 4000", "deadline-ms 0"),
+    ] {
+        assert_eq!(
+            Manifest::parse(good.replace(from, to).as_bytes()),
+            Err(Refusal::Format),
+            "{to}"
+        );
+    }
+    assert!(Manifest::parse(
+        good.replace("spin-ms 5", "spin-ms 0")
+            .replace("cap 64 1 64", "cap none")
+            .as_bytes()
+    )
+    .is_ok());
 }
