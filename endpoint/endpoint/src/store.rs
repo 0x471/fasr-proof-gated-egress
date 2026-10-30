@@ -1,11 +1,12 @@
 // The update store: STORE/state records the applied update and STORE/active holds its files.
-// Updates are applied only by `pge-endpoint --apply-update`, never while the endpoint serves, so
-// every answer is checked under one state.
+// Updates are applied only by `pge-endpoint --apply-update`, and STORE/lock keeps that from ever
+// overlapping another install or a serving endpoint, so every answer is checked under one state.
 use pge_update::{Outcome, Refusal, State, Update, FILES};
 use pge_verify::{read_regular, Pins};
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,
+    os::fd::AsRawFd,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -20,6 +21,8 @@ pub struct Active {
     pub version: u64,
     pub policy: pge_core::Policy,
     pub proof_bytes: usize,
+    /// Held shared while the endpoint runs; an installer can't take it exclusively meanwhile.
+    pub lock: File,
 }
 
 struct Files {
@@ -73,6 +76,56 @@ fn state(store: &Path) -> Result<Option<State>, String> {
                 .map(Some)
                 .map_err(|_| "state format".into())
         }
+    }
+}
+
+/// The installer holds STORE/lock exclusively from reading the state to its last write; a
+/// serving endpoint holds it shared. Neither waits: if the other side holds it, this fails.
+fn lock(store: &Path, exclusive: bool) -> Result<File, String> {
+    let path = store.join("lock");
+    let file = if exclusive {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)
+    } else {
+        File::open(&path)
+    }
+    .map_err(|e| match e.kind() {
+        // Every install creates the lock first, so without it nothing was ever applied.
+        std::io::ErrorKind::NotFound if !exclusive => "no update applied".to_owned(),
+        _ => "store lock".to_owned(),
+    })?;
+    let op = if exclusive {
+        libc::LOCK_EX
+    } else {
+        libc::LOCK_SH
+    } | libc::LOCK_NB;
+    // The descriptor belongs to `file`, which the caller keeps for as long as it needs the lock.
+    if unsafe { libc::flock(file.as_raw_fd(), op) } != 0 {
+        return Err("store busy".into());
+    }
+    Ok(file)
+}
+
+/// Before installing over a store, its files must still match its state, so editing the state
+/// alone can't let an older update in. The one exception finishes an interrupted install: the
+/// active files already hold this exact manifest and only the state lags behind.
+fn consistent(
+    store: &Path,
+    root: &pge_update::VerifyingKey,
+    device: &str,
+    state: &State,
+    update: &Files,
+) -> Result<(), Refusal> {
+    let Ok(active) = Files::read(&store.join("active")) else {
+        return Err(Refusal::State);
+    };
+    match pge_update::active(root, device, state, &active.update()) {
+        Ok(_) => Ok(()),
+        Err(_) if active.meta[2] == update.meta[2] => Ok(()),
+        Err(_) => Err(Refusal::State),
     }
 }
 
@@ -150,8 +203,14 @@ pub fn apply(args: &[String]) -> ExitCode {
         let (dir, root, device, store) =
             (Path::new(&v[0]), Path::new(&v[1]), &v[2], Path::new(&v[3]));
         let root = root_key(root)?;
+        let _lock = lock(store, true)?;
         let current = state(store)?;
         let files = Files::read(dir)?;
+        if let Some(s) = &current {
+            if let Err(r) = consistent(store, &root, device, s, &files) {
+                return Ok(format!("refused {}", r.word()));
+            }
+        }
         match pge_update::decide(&root, device, current.as_ref(), &files.update()) {
             Ok(Outcome::Same) => Ok("same".into()),
             Ok(Outcome::Apply(next)) => {
@@ -176,6 +235,7 @@ pub fn apply(args: &[String]) -> ExitCode {
 /// Loads the applied update for the endpoint, checking it again from scratch.
 pub fn load(store: &Path, root: &Path, device: &str) -> Result<Active, String> {
     let root = root_key(root)?;
+    let lock = lock(store, false)?;
     let state = state(store)?.ok_or("no update applied")?;
     let dir = store.join("active");
     let files = Files::read(&dir)?;
@@ -197,5 +257,6 @@ pub fn load(store: &Path, root: &Path, device: &str) -> Result<Active, String> {
         version: manifest.version,
         policy,
         proof_bytes,
+        lock,
     })
 }

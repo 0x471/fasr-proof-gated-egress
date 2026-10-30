@@ -346,7 +346,8 @@ impl Endpoint {
 
 pub fn run(mut config: Config) -> Result<(), String> {
     let source = config.source.clone();
-    let (bundle, domain, version) = match &source {
+    // In store mode the store's lock is held until the endpoint exits, so no install can overlap.
+    let (bundle, domain, version, _store_lock) = match &source {
         Source::Pinned {
             bundle,
             pins,
@@ -364,6 +365,7 @@ pub fn run(mut config: Config) -> Result<(), String> {
                 Bundle::load(bundle, pins).map_err(str::to_owned)?,
                 domain,
                 None,
+                None,
             )
         }
         Source::Store {
@@ -376,7 +378,12 @@ pub fn run(mut config: Config) -> Result<(), String> {
             let bundle = Bundle::load(&active.dir, active.pins).map_err(str::to_owned)?;
             config.policy = active.policy;
             config.proof_bytes = active.proof_bytes;
-            (bundle, Some(domain), Some(active.version))
+            (
+                bundle,
+                Some(domain),
+                Some(active.version),
+                Some(active.lock),
+            )
         }
     };
     let bundle = Arc::new(bundle);
