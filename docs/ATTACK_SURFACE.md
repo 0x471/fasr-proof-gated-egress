@@ -24,9 +24,21 @@ Other running services that don't take network input directly: cron, dbus, journ
 
 **Gaps in this snapshot.** No UDP port scan from outside (needs root on the laptop). 691 TCP ports showed as filtered rather than closed; not explained yet (firewall rules weren't checked; rate limiting or the laptop's Internet Sharing bridge are other guesses). Physical inputs are out of scope (threat model) but listed so the list is complete.
 
-## v1: stripped Buildroot image (to measure)
+## v1: stripped Buildroot image, booted 30 Oct 2026
 
-To fill in once the image runs the Rust endpoint: the same table, expected to drop SSH, mDNS, Wi-Fi, Bluetooth, the user session and most modules.
+Buildroot 2025.02.18, `image/build.sh` (`242cb4e`), endpoint binary sha256 `3ebfb66c...7a1a`. From outside: TCP 8700 only (connect scan of all ports; every other port refused). No SSH, so nothing was measured from inside; the list below is from the image contents.
+
+| Way in | Who can use it | Software that processes the input |
+|---|---|---|
+| Ethernet port | server side and outside (one link) | `bcmgenet` (built into the kernel); kernel IPv4, TCP and UDP; IPv6 is a module that nothing loads (not verified on the running device); no firewall rules |
+| TCP 8700 | users, and the server through its own outgoing connection | `pge-endpoint` as user `pge`; its checker as a child process with resource limits |
+| Wi-Fi, Bluetooth | anyone in radio range | drivers are modules that nothing loads and the image ships no Wi-Fi firmware; not verified on the running device |
+| Serial console, HDMI keyboard | physical access | `getty`; root logs in with an empty password (to fix) |
+| SD card and boot | physical access | VideoCore boot firmware (closed), kernel; no secure boot; root file system mounted read-only |
+
+Other services: `syslogd`, `klogd`, `crond` (to remove), `seedrng` (can't save its seed on the read-only root).
+
+**Scan artefacts.** Homebrew `nmap` on the laptop is blocked by macOS's Local Network permission (every port "host-unreach"); scans used Apple's Python instead. Parallel scans also time out on contiguous port ranges; those ports re-probed one at a time were closed. The 691 "filtered" ports on v0 (29 Oct) are most likely the same artefact.
 
 ## The end state (design)
 
