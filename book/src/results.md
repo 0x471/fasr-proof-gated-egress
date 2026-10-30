@@ -71,7 +71,8 @@ Other runs the same day at 256 MiB: one first check, then 200/200 and 10/10, so 
 | Version | Seen from outside | Notes |
 |---|---|---|
 | v0 (stock OS, 16 Oct) | TCP 22 (ssh) and 8700 (the endpoint); UDP 5353 (mDNS) | 633 packages, 13 running services |
-| v0 (stock OS, 29 Oct, endpoint not running) | TCP 22 only (`nmap -p-`); 691 TCP ports showed as filtered, not yet explained; UDP not scanned. On the device: UDP 5353 (mDNS) and two unattributed UDP ports | 633 packages, 13 running services, 66 kernel modules (Wi-Fi and Bluetooth drivers loaded); per-port software in `docs/ATTACK_SURFACE.md` |
+| v0 (stock OS, 29 Oct, endpoint not running) | TCP 22 only (`nmap -p-`); 691 TCP ports showed as filtered, most likely an artefact of the scan (on the v1 image the same pattern re-probed one by one came back closed); UDP not scanned. On the device: UDP 5353 (mDNS) and two unattributed UDP ports | 633 packages, 13 running services, 66 kernel modules (Wi-Fi and Bluetooth drivers loaded); per-port software in `docs/ATTACK_SURFACE.md` |
+| v1 image with the Rust endpoint (30 Oct, booted on the Pi) | TCP 8700 only (connect scan of all 65,535 ports from the laptop; every other port refused) | One static endpoint binary as user `pge`, fixed release 4 s, read-only root, no Python, no SSH; UDP not scanned |
 | v1 development image (16 Oct, `sdcard.img` 159 MB) | 0 of 65,535 TCP ports open; top 100 UDP ports closed; no IPv6 | **No endpoint was running on this image yet**, so this shows a quiet base system, not a working hardened endpoint |
 <!-- ANCHOR_END: attack-surface -->
 
@@ -91,6 +92,8 @@ The device now runs the Rust endpoint (static 64-bit ARM binary from CI, no Pyth
 | 5 ms spin, 512 answers, the same pre-registered protocol | inconclusive again: held-out decoder 0.44 / 0.48 errors, p = 0.0325; received 0.8-2.8 ms after the release time |
 
 Two fixes made the Rust endpoint faster than the Python one: each check had hashed the 4 MB bundle three times (this Pi's CPU has no SHA instructions, about 25-28 ms per pass), and the supervisor slept 1 ms after every 64 KiB written to the checker, about 66 ms per check. Before them the Rust endpoint was about 65 ms slower per answer end to end.
+
+**The v1 image on the Pi (30 Oct).** The laptop as the AI server, the image's own settings (fixed release, 4 s, 5 ms spin): honest answers 9/9 ok, each received 4001-4003 ms after it was sent; changed outputs 3/3 and garbage frames 3/3 refused (`unavailable`); the endpoint reconnected to a restarted server within about 2 s. Leakage, one run each with the bits of the matrix below: the 1 s timing code gave 11 of 16 bits wrong (answers 4000.8-4001.6 ms); the failure-position code still leaked 16/16 (no cap on this image). These runs overlapped a port scan, so their timing is a smoke check only.
 
 ## The endpoint end to end
 
