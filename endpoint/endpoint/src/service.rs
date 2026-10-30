@@ -344,8 +344,9 @@ impl Endpoint {
     }
 }
 
-pub fn run(config: Config) -> Result<(), String> {
-    let (bundle, domain, version) = match &config.source {
+pub fn run(mut config: Config) -> Result<(), String> {
+    let source = config.source.clone();
+    let (bundle, domain, version) = match &source {
         Source::Pinned {
             bundle,
             pins,
@@ -373,6 +374,8 @@ pub fn run(config: Config) -> Result<(), String> {
             let active = crate::store::load(store, root, device)?;
             let domain = Domain::parse(&active.domain).map_err(str::to_owned)?;
             let bundle = Bundle::load(&active.dir, active.pins).map_err(str::to_owned)?;
+            config.policy = active.policy;
+            config.proof_bytes = active.proof_bytes;
             (bundle, Some(domain), Some(active.version))
         }
     };

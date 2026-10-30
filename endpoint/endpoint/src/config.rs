@@ -7,6 +7,7 @@ use std::{
 };
 
 /// Where the model comes from: fixed files pinned by hash, or the signed update store.
+#[derive(Clone)]
 pub enum Source {
     Pinned {
         bundle: PathBuf,
@@ -99,9 +100,29 @@ impl Config {
             .get("--halt-after")
             .map(|s| s.parse::<u64>().map_err(|_| "invalid halt"))
             .transpose()?;
-        let proof_bytes = required("--proof-bytes")?
-            .parse::<usize>()
-            .map_err(|_| "invalid proof length")?;
+        let store_mode = map.contains_key("--store");
+        let policy_flags = [
+            "--deadline",
+            "--max-pending",
+            "--halt-after",
+            "--proof-bytes",
+            "--spin-ms",
+            "--release",
+            "--cap-window",
+            "--cap-failures",
+            "--cap-cooldown",
+        ];
+        if store_mode && policy_flags.iter().any(|k| map.contains_key(*k)) {
+            return Err("--store takes the policy from the signed manifest".into());
+        }
+        // In store mode these placeholders are replaced by the manifest's policy at start-up.
+        let proof_bytes = if store_mode {
+            "1"
+        } else {
+            required("--proof-bytes")?
+        }
+        .parse::<usize>()
+        .map_err(|_| "invalid proof length")?;
         if !(1..=65536).contains(&proof_bytes) {
             return Err("invalid proof length".into());
         }

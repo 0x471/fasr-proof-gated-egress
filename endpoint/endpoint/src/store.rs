@@ -18,6 +18,8 @@ pub struct Active {
     pub pins: Pins,
     pub domain: Vec<u8>,
     pub version: u64,
+    pub policy: pge_core::Policy,
+    pub proof_bytes: usize,
 }
 
 struct Files {
@@ -184,10 +186,16 @@ pub fn load(store: &Path, root: &Path, device: &str) -> Result<Active, String> {
         manifest.files[1].clone(),
         manifest.files[2].clone(),
     ]);
+    let (policy, proof_bytes) = manifest
+        .settings
+        .policy()
+        .map_err(|r| format!("store refused: {}", r.word()))?;
     Ok(Active {
         dir,
         pins,
         domain: files.files[3].clone(),
         version: manifest.version,
+        policy,
+        proof_bytes,
     })
 }
